@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Power the machine off, but only once the Palworld service is stopped. This is
+# a defence-in-depth check: the orchestrator already runs shutdown + backup
+# first, and this refuses to cut power while the server is still running.
+#
+# Install root-owned 0755 and grant it to the bot account via a narrow sudoers
+# rule (see config/sudoers-palworld-control.example). Set PALWORLD_POWEROFF_DRYRUN=1
+# to log the action instead of powering off (used by the WSL verification).
+CONFIG_FILE="${PALWORLD_CONTROL_ENV:-/etc/palworld-control/control.env}"
+
+PALWORLD_SERVICE="palworld-server.service"
+PALWORLD_POWEROFF_DRYRUN="0"
+
+if [ -e "$CONFIG_FILE" ]; then
+  if find "$CONFIG_FILE" -maxdepth 0 -perm /022 | grep -q .; then
+    printf '%s\n' 'config file must not be group/world writable' >&2
+    exit 77
+  fi
+  # shellcheck source=/dev/null
+  . "$CONFIG_FILE"
+fi
+
+if systemctl is-active --quiet "$PALWORLD_SERVICE"; then
+  printf '%s\n' 'refusing to power off: palworld is still running' >&2
+  exit 1
+fi
+
+if [ "$PALWORLD_POWEROFF_DRYRUN" = "1" ]; then
+  printf 'poweroff skipped (dry run)\n'
+  exit 0
+fi
+
+exec systemctl poweroff

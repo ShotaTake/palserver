@@ -1,17 +1,144 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DESIGN SKELETON ONLY.
-# Claude Code must implement this according to docs/IMPLEMENTATION_SPEC.md.
-# It must not evaluate arbitrary input, source user-controlled files, or print secrets.
+# Fixed-command controller for the Palworld dedicated server.
+#
+# Invoked only through the SSH forced-command wrapper (palworld-control-ssh)
+# with one exact command name. It never evaluates arbitrary input, never uses a
+# shell to interpret arguments, and never prints the REST admin password.
+#
+# Behaviour was verified against a real Palworld dedicated server
+# (v1.0.1.100619). See docs/VERIFICATION.md for the empirical findings.
 
-command_name="${1:-}"
+# Configuration comes from a root-owned env file, never from arguments.
+CONFIG_FILE="${PALWORLD_CONTROL_ENV:-/etc/palworld-control/control.env}"
 
-case "$command_name" in
-  status|start|players|shutdown|backup|poweroff)
-    printf '%s\n' "not implemented: $command_name" >&2
-    exit 78
-    ;;
+# Defaults; override in CONFIG_FILE.
+PALWORLD_SERVICE="palworld-server.service"
+PALWORLD_REST_HOST="127.0.0.1"
+PALWORLD_REST_PORT="8212"
+PALWORLD_REST_USER="admin"
+PALWORLD_REST_PASSWORD=""
+PALWORLD_SAVE_DIR="/opt/palworld-server/Pal/Saved/SaveGames"
+PALWORLD_BACKUP_SCRIPT="/usr/local/sbin/palworld-backup"
+PALWORLD_POWEROFF_SCRIPT="/usr/local/sbin/palworld-safe-poweroff"
+# How long the in-game shutdown countdown runs, and how long we wait for the
+# service to actually go inactive afterwards.
+PALWORLD_SHUTDOWN_ANNOUNCE_SECONDS="5"
+PALWORLD_SHUTDOWN_WAIT_SECONDS="60"
+
+if [ -e "$CONFIG_FILE" ]; then
+  # Refuse a group/world-writable config: it would let a non-root user inject
+  # settings (including the command this script trusts).
+  if find "$CONFIG_FILE" -maxdepth 0 -perm /022 | grep -q .; then
+    printf '%s\n' 'config file must not be group/world writable' >&2
+    exit 77
+  fi
+  # shellcheck source=/dev/null
+  . "$CONFIG_FILE"
+fi
+
+_curl() {
+  # _curl METHOD API_PATH [json_body]
+  local method="$1" api_path="$2" body="${3:-}"
+  local url="http://${PALWORLD_REST_HOST}:${PALWORLD_REST_PORT}/v1/api/${api_path}"
+  if [ -n "$body" ]; then
+    curl -fsS --max-time 15 -X "$method" \
+      -H 'Content-Type: application/json' \
+      -u "${PALWORLD_REST_USER}:${PALWORLD_REST_PASSWORD}" \
+      -d "$body" "$url"
+  else
+    # POST with no body still needs an explicit length or the server returns 411.
+    curl -fsS --max-time 15 -X "$method" \
+      -H 'Content-Length: 0' \
+      -u "${PALWORLD_REST_USER}:${PALWORLD_REST_PASSWORD}" \
+      "$url"
+  fi
+}
+
+_service_active() {
+  systemctl is-active --quiet "$PALWORLD_SERVICE"
+}
+
+_json_int() {
+  # Extract an integer field from a flat JSON object on stdin.
+  grep -oE "\"$1\"[[:space:]]*:[[:space:]]*-?[0-9]+" | grep -oE -- '-?[0-9]+$' | head -n1
+}
+
+cmd_status() {
+  if _service_active; then
+    printf 'palworld=running\n'
+  else
+    printf 'palworld=stopped\n'
+  fi
+}
+
+cmd_start() {
+  sudo -n systemctl start "$PALWORLD_SERVICE"
+  printf 'started\n'
+}
+
+cmd_players() {
+  # Emits players=N (and max_players=M when known). A REST failure is a hard
+  # error so the orchestrator treats the count as unknown, not zero.
+  local body players max_players
+  body="$(_curl GET metrics)"
+  players="$(printf '%s' "$body" | _json_int currentplayernum)"
+  max_players="$(printf '%s' "$body" | _json_int maxplayernum)"
+  if [ -z "$players" ]; then
+    printf '%s\n' 'could not read player count' >&2
+    exit 1
+  fi
+  printf 'players=%s\n' "$players"
+  if [ -n "$max_players" ] && [ "$max_players" != "0" ]; then
+    printf 'max_players=%s\n' "$max_players"
+  fi
+}
+
+cmd_shutdown() {
+  # Save the world, then ask the server to shut down cleanly. Verified: the
+  # shutdown endpoint writes the save before the process exits.
+  if ! _service_active; then
+    printf 'stopped\n'
+    return 0
+  fi
+  _curl POST save >/dev/null
+  local msg='Server shutting down for maintenance.'
+  _curl POST shutdown \
+    "{\"waittime\":${PALWORLD_SHUTDOWN_ANNOUNCE_SECONDS},\"message\":\"${msg}\"}" \
+    >/dev/null
+  local waited=0
+  while _service_active; do
+    sleep 2
+    waited=$((waited + 2))
+    if [ "$waited" -ge "$PALWORLD_SHUTDOWN_WAIT_SECONDS" ]; then
+      # Fall back to a hard stop only after the graceful path timed out.
+      sudo -n systemctl stop "$PALWORLD_SERVICE" || true
+      break
+    fi
+  done
+  if _service_active; then
+    printf '%s\n' 'palworld did not stop' >&2
+    exit 1
+  fi
+  printf 'stopped\n'
+}
+
+cmd_backup() {
+  "$PALWORLD_BACKUP_SCRIPT"
+}
+
+cmd_poweroff() {
+  sudo -n "$PALWORLD_POWEROFF_SCRIPT"
+}
+
+case "${1:-}" in
+  status) cmd_status ;;
+  start) cmd_start ;;
+  players) cmd_players ;;
+  shutdown) cmd_shutdown ;;
+  backup) cmd_backup ;;
+  poweroff) cmd_poweroff ;;
   *)
     printf '%s\n' 'invalid command' >&2
     exit 64
