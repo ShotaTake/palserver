@@ -1,0 +1,5 @@
+# Replace PUBLIC_KEY_DATA and review the path.
+# The command wrapper must accept only a small fixed allowlist.
+# Use a dedicated account without an interactive shell.
+
+restrict,command="/usr/local/sbin/palworld-control-ssh" ssh-ed25519 PUBLIC_KEY_DATA palworld-bot@raspberrypi

@@ -1,0 +1,9 @@
+# TEMPLATE ONLY. Validate with `visudo -cf FILE` before installation.
+# Prefer putting privileged implementation in root-owned scripts and granting
+# only those exact scripts. Never grant ALL, shells, editors, or package managers.
+
+Cmnd_Alias PALWORLD_STATUS = /usr/bin/systemctl is-active palworld-server.service
+Cmnd_Alias PALWORLD_START = /usr/bin/systemctl start palworld-server.service
+Cmnd_Alias PALWORLD_POWER = /usr/local/sbin/palworld-safe-poweroff
+
+palbotctl ALL=(root) NOPASSWD: PALWORLD_STATUS, PALWORLD_START, PALWORLD_POWER

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# DESIGN SKELETON ONLY.
+# Claude Code must implement this according to docs/IMPLEMENTATION_SPEC.md.
+# It must not evaluate arbitrary input, source user-controlled files, or print secrets.
+
+command_name="${1:-}"
+
+case "$command_name" in
+  status|start|players|shutdown|backup|poweroff)
+    printf '%s\n' "not implemented: $command_name" >&2
+    exit 78
+    ;;
+  *)
+    printf '%s\n' 'invalid command' >&2
+    exit 64
+    ;;
+esac

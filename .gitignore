@@ -1,0 +1,41 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+config/*.env
+!config/*.env.example
+secrets/
+*.key
+*.pem
+id_ed25519*
+
+# Runtime data
+backups/
+save-data/
+logs/
+*.log
+*.pid
+*.sock
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude local-only memory
+CLAUDE.local.md

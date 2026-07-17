@@ -1,0 +1,22 @@
+# 参考にした公式資料
+
+- GitHub: Creating a new repository
+  - https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository
+- GitHub: Inviting collaborators to a personal repository
+  - https://docs.github.com/en/account-and-profile/how-tos/setting-up-and-managing-your-personal-account-on-github/managing-access-to-your-personal-repositories/inviting-collaborators-to-a-personal-repository
+- GitHub: Building and testing Python
+  - https://docs.github.com/en/actions/tutorials/build-and-test-code/python
+- GitHub: About protected branches
+  - https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
+- Anthropic: Claude Code quickstart
+  - https://docs.anthropic.com/en/docs/claude-code/quickstart
+- Anthropic: How Claude remembers your project
+  - https://docs.anthropic.com/en/docs/claude-code/memory
+- Anthropic: Claude Code settings
+  - https://docs.anthropic.com/en/docs/claude-code/settings
+- Discord.py documentation
+  - https://discordpy.readthedocs.io/
+- Tailscale SSH
+  - https://tailscale.com/docs/features/tailscale-ssh
+- Palworld REST API
+  - https://docs.palworldgame.com/category/rest-api/

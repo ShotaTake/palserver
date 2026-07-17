@@ -1,0 +1,29 @@
+[Unit]
+Description=Palworld Discord Operations Bot
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=palworld-bot
+Group=palworld-bot
+WorkingDirectory=/opt/palworld-server-ops
+EnvironmentFile=/etc/palworld-bot/bot.env
+ExecStart=/opt/palworld-server-ops/.venv/bin/palworld-bot
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+ReadWritePaths=/var/lib/palworld-bot
+
+[Install]
+WantedBy=multi-user.target

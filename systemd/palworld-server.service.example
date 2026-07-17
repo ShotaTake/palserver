@@ -1,0 +1,21 @@
+# This is a template only. Adjust paths and the Palworld startup command to the
+# actual Linux server installation. Do not install it without manual review.
+
+[Unit]
+Description=Palworld Dedicated Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=palworld
+Group=palworld
+WorkingDirectory=/opt/palworld-server
+ExecStart=/opt/palworld-server/start-palworld.sh
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=180
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# TEMPLATE ONLY. Install as root-owned 0755 after review.
+# This wrapper deliberately accepts only exact command names.
+
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  status)
+    exec /usr/local/sbin/palworld-control status
+    ;;
+  start)
+    exec /usr/local/sbin/palworld-control start
+    ;;
+  players)
+    exec /usr/local/sbin/palworld-control players
+    ;;
+  shutdown)
+    exec /usr/local/sbin/palworld-control shutdown
+    ;;
+  backup)
+    exec /usr/local/sbin/palworld-control backup
+    ;;
+  poweroff)
+    exec /usr/local/sbin/palworld-control poweroff
+    ;;
+  *)
+    printf '%s\n' 'command denied' >&2
+    exit 64
+    ;;
+esac

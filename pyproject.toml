@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palworld-server-ops"
+version = "0.1.0"
+description = "Secure Discord controller for a private Palworld server"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "discord.py>=2.3,<3",
+  "python-dotenv>=1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10,<2",
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.23,<2",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+palworld-bot = "palworld_bot.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["palworld_bot"]
