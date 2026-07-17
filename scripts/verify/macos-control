@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# VERIFICATION ONLY (macOS).
+# Simulates the Palworld server with a dummy local process so the Discord bot
+# flow (status/start/players/shutdown/backup/poweroff) can be tested at home.
+# Accepts exact command names only. Never evaluates arbitrary input.
+# poweroff is intentionally a no-op so the verification Mac is never shut down.
+
+base_dir="${PALWORLD_VERIFY_DIR:-$HOME/palworld-verify}"
+pid_file="$base_dir/dummy.pid"
+save_dir="$base_dir/save"
+backup_dir="$base_dir/backups"
+dummy_port="${PALWORLD_VERIFY_PORT:-18765}"
+
+dummy_pid() {
+  if [[ -f "$pid_file" ]]; then
+    cat "$pid_file"
+  fi
+}
+
+is_running() {
+  local pid
+  pid="$(dummy_pid)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+cmd_status() {
+  if is_running; then
+    printf 'palworld=running\n'
+  else
+    printf 'palworld=stopped\n'
+  fi
+}
+
+cmd_start() {
+  mkdir -p "$save_dir" "$backup_dir"
+  if is_running; then
+    printf 'already running\n'
+    return 0
+  fi
+  nohup python3 -m http.server "$dummy_port" --bind 127.0.0.1 --directory "$save_dir" \
+    >/dev/null 2>&1 &
+  printf '%s\n' "$!" > "$pid_file"
+  sleep 1
+  if is_running; then
+    printf 'started\n'
+  else
+    rm -f "$pid_file"
+    printf 'failed to start dummy process\n' >&2
+    return 1
+  fi
+}
+
+cmd_players() {
+  # To simulate connected players during verification, write a number into
+  # $base_dir/players_override on the Mac (e.g. `echo 2 > players_override`).
+  local players=0
+  if [[ -f "$base_dir/players_override" ]]; then
+    players="$(tr -cd '0-9' < "$base_dir/players_override")"
+    players="${players:-0}"
+  fi
+  printf 'players=%s\n' "$players"
+  if [[ -f "$base_dir/max_players_override" ]]; then
+    local max_players
+    max_players="$(tr -cd '0-9' < "$base_dir/max_players_override")"
+    if [[ -n "$max_players" ]]; then
+      printf 'max_players=%s\n' "$max_players"
+    fi
+  fi
+}
+
+cmd_shutdown() {
+  mkdir -p "$save_dir"
+  date '+saved at %Y-%m-%dT%H:%M:%S' > "$save_dir/world.sav"
+  if is_running; then
+    kill "$(dummy_pid)" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      is_running || break
+      sleep 1
+    done
+  fi
+  rm -f "$pid_file"
+  printf 'stopped\n'
+}
+
+cmd_backup() {
+  mkdir -p "$save_dir" "$backup_dir"
+  local archive
+  archive="$backup_dir/backup-$(date '+%Y%m%d-%H%M%S').tar.gz"
+  tar -czf "$archive" -C "$base_dir" save
+  printf 'backup ok\n'
+}
+
+cmd_poweroff() {
+  printf 'poweroff skipped (verification mode)\n'
+}
+
+case "${1:-}" in
+  status) cmd_status ;;
+  start) cmd_start ;;
+  players) cmd_players ;;
+  shutdown) cmd_shutdown ;;
+  backup) cmd_backup ;;
+  poweroff) cmd_poweroff ;;
+  *)
+    printf '%s\n' 'invalid command' >&2
+    exit 64
+    ;;
+esac

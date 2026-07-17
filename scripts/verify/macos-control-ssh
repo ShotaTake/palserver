@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# VERIFICATION ONLY (macOS).
+# Forced-command wrapper for authorized_keys. Install as:
+#   command="/Users/<user>/palworld-verify/macos-control-ssh",restrict ssh-ed25519 AAAA...
+# Accepts exact command names only; everything else is denied.
+
+control="$HOME/palworld-verify/macos-control"
+
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  status|start|players|shutdown|backup|poweroff)
+    exec "$control" "$SSH_ORIGINAL_COMMAND"
+    ;;
+  *)
+    printf '%s\n' 'command denied' >&2
+    exit 64
+    ;;
+esac
