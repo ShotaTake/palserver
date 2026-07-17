@@ -3,10 +3,6 @@
 Raspberry Pi上のDiscord Botから、LinuxのPalworldサーバーを起動・状態確認・安全停止する小規模プロジェクトです。
 
 ## 方針
-
-- Dockerは使用しない
-- mainへ直接pushする
-- 利用者数は固定しない
 - DiscordロールでPlayer/Maintainerを管理する
 - SSHと管理APIはインターネットへ公開しない
 - MVPは`status`、`start`、`stop`だけ
@@ -45,8 +41,7 @@ pytest
 ```text
 CLAUDE.md、docs/IMPLEMENTATION_SPEC.md、docs/SECURITY.mdを読んでください。
 Phase 1だけを対象に、まだコードを変更せず、短い実装計画と変更予定ファイルを示してください。
-利用人数を4人に固定せず、DiscordのPlayerロールとMaintainerロールで認証してください。
-不要な抽象化や追加機能は作らないでください。
+DiscordのPlayerロールとMaintainerロールで認証してください。
 ```
 
 計画確認後:
