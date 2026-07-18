@@ -22,24 +22,9 @@
 - [ ] **サーバー PC は有線 LAN 接続**（Wake on LAN は Wi-Fi では動かない）
 - [ ] Raspberry Pi（3 以降、64bit 推奨）+ SD カード + 電源。**可能なら有線 LAN**
 - [ ] Ubuntu Server 24.04 LTS のインストール USB
-- [ ] GitHub アカウント（リポジトリは private のため。→ 下記「リポジトリへのアクセス準備」）
 - [ ] Discord の Bot トークンと各種 ID（→「Part C」参照。リモート協力者が用意して安全な手段で共有しても良い）
 
-## リポジトリへのアクセス準備（最初に一度だけ）
-
-このリポジトリは private なので、クローンする前に次の準備をする。
-
-1. **（リポジトリ所有者の作業）** GitHub の リポジトリページ → Settings → Collaborators → **Add people** で現地作業者のアカウントを招待（Read 権限で十分）
-2. **（現地作業者の作業）** 招待メールを承認したら、クローン用のトークンを作る:
-   - GitHub → 右上アイコン → Settings → Developer settings → **Personal access tokens → Fine-grained tokens → Generate new token**
-   - Repository access: **Only select repositories** → このリポジトリを選択
-   - Permissions: **Contents: Read-only** だけ
-   - 有効期限は長め（90日〜）に設定し、表示されたトークン（`github_pat_...`）を控える
-3. サーバー PC / Pi で `git clone` するとき、ユーザー名は GitHub のユーザー名、**パスワード欄にこのトークン**を入力する。毎回聞かれないようにするには、クローン前に一度だけ:
-
-   ```bash
-   git config --global credential.helper store   # 初回入力後、そのマシンに保存される
-   ```
+> このリポジトリは **public** なので、クローンに GitHub アカウントや認証は不要です。以降の `git clone https://github.com/ShotaTake/palserver.git` はそのまま実行できます。
 
 ---
 
@@ -164,7 +149,7 @@ sudo -u palworld nano "$CFG"
 
 ## A-7. systemd サービス化
 
-リポジトリを取得して example を配置（初回はユーザー名と PAT トークンを聞かれる →「リポジトリへのアクセス準備」参照）:
+リポジトリを取得して example を配置（public なので認証不要）:
 
 ```bash
 cd ~ && git clone https://github.com/ShotaTake/palserver.git
