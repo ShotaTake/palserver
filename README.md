@@ -17,6 +17,17 @@ Raspberry Pi: Bot + Wake on LAN
 Linux Server PC: Palworld + systemd + backup
 ```
 
+## セットアップ
+
+本番構築（サーバーPC + Raspberry Pi）の手順は次を参照してください。現地作業者が一人で完了できるコピペ手順書です。
+
+- **[docs/SETUP_PRODUCTION.md](docs/SETUP_PRODUCTION.md)** — 本番セットアップ手順書（サーバーPC / Pi / Discord / ルーター / 動作確認 / トラブルシューティング）
+
+検証記録:
+
+- [docs/VERIFICATION.md](docs/VERIFICATION.md) — 自宅検証（Windows Bot → macOS ダミーサーバー）
+- [docs/WSL_SERVER_VERIFICATION.md](docs/WSL_SERVER_VERIFICATION.md) — サーバー側検証（WSL + 実 Palworld サーバー、REST API の実測結果）
+
 ## 最初に読むもの
 
 1. `docs/GITHUB_SETUP.md`

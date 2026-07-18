@@ -106,11 +106,23 @@ PALWORLD_BACKUP_DIR="/var/lib/palworld-backups"
 PALWORLD_POWEROFF_DRYRUN="1"
 ENV
 sudo chmod 600 /etc/palworld-control/control.env
+
+# SSH 経由の実行ユーザー（palbotctl）が読める必要がある場合は group を合わせて 0640 に
+sudo chown root:palbotctl /etc/palworld-control/control.env
+sudo chmod 640 /etc/palworld-control/control.env
+
+# バックアップ先は SSH 実行ユーザー（palbotctl）所有にする。
+# root 所有のままだと SSH 経由の backup が Permission denied で失敗する
+# （検証で実際に踏んだ罠。バックアップ失敗時は poweroff されない安全設計のため
+#   サーバー PC が落ちず、Discord には「バックアップに失敗」と返る）。
+sudo install -d -o palbotctl -g palbotctl -m 0750 /var/lib/palworld-backups
 ```
 
 systemd ユニットは [palworld-server.service.example](../systemd/palworld-server.service.example) を `/etc/systemd/system/palworld-server.service` に配置（ExecStart を実パスに合わせる）→ `sudo systemctl daemon-reload`。
 
 `palworld-control` は `systemctl start/stop` と poweroff に `sudo -n` を使う。本番では [sudoers-palworld-control.example](../config/sudoers-palworld-control.example) で bot 用アカウントに固定コマンドだけを NOPASSWD 許可する。
+
+SSH 受け口は次のとおり（Mac 検証と同じ方式）: 専用ユーザー `palbotctl` を作成し、[palworld-control-ssh](../scripts/server/palworld-control-ssh) を `/usr/local/sbin/` に設置、`authorized_keys` に `restrict,command="/usr/local/sbin/palworld-control-ssh"` 付きで Bot の公開鍵を登録する。
 
 ## 6. エンドツーエンド検証結果
 
