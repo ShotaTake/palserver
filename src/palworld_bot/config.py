@@ -40,6 +40,7 @@ class BotConfig:
     ssh_command_timeout_seconds: int
     stop_wait_seconds: int
     log_level: str
+    pal_image_dir: str | None
 
 
 def _require(env: Mapping[str, str], key: str) -> str:
@@ -122,4 +123,5 @@ def load_config(env: Mapping[str, str]) -> BotConfig:
         ssh_command_timeout_seconds=_positive_int(env, "SSH_COMMAND_TIMEOUT_SECONDS", 20),
         stop_wait_seconds=_positive_int(env, "STOP_WAIT_SECONDS", 60),
         log_level=log_level,
+        pal_image_dir=env.get("PAL_IMAGE_DIR", "").strip() or None,
     )

@@ -7,11 +7,13 @@ command output to Discord.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import Any
 
 import discord
 from discord import app_commands
 
-from palworld_bot import auth
+from palworld_bot import auth, pals
 from palworld_bot.config import BotConfig
 from palworld_bot.services.server_manager import (
     ServerManager,
@@ -23,21 +25,25 @@ from palworld_bot.services.server_manager import (
 
 logger = logging.getLogger(__name__)
 
-_GENERIC_ERROR_MESSAGE = "内部エラーが発生しました。Botのログを確認してください。"
+# The bot speaks as Palworld's Black Marketeer (闇商人): a gruff, shady dealer.
+# The flavour is prose only — the actual status data stays plain and readable.
+_GENERIC_ERROR_MESSAGE = "……ちっ、裏で厄介事だ。番人（ログ）に聞いてくれ。"
 
 _START_MESSAGES = {
-    StartOutcome.STARTED: "Palworldサーバーを起動しました。",
-    StartOutcome.ALREADY_RUNNING: "Palworldサーバーはすでに起動しています。",
-    StartOutcome.BUSY: "別の操作が実行中です。完了を待ってから再実行してください。",
+    StartOutcome.STARTED: "……よかろう、灯を入れてやった。せいぜい楽しむがいい。",
+    StartOutcome.ALREADY_RUNNING: "はっ、とっくに開いてるぜ。目ん玉ついてんのか？",
+    StartOutcome.BUSY: "今は別の商いの最中でな。少し待ちな。",
     StartOutcome.BOOT_TIMEOUT: (
-        "WOLを送信しましたが、時間内にサーバーPCへ接続できませんでした。"
+        "起こしの狼煙（WOL）は上げたが……あの箱、うんともすんとも言わねえ。出直しな。"
     ),
-    StartOutcome.START_FAILED: "起動に失敗しました。Botのログを確認してください。",
+    StartOutcome.START_FAILED: "……しくじった。番人（ログ）に事情を聞きな。",
 }
 
 
 def _format_status(report: StatusReport) -> str:
     lines = [
+        "……様子が知りたいってのかい。ほらよ、目を通しな。",
+        "",
         f"サーバーPC: {report.pc.value}",
         f"Palworld: {report.palworld.value}",
     ]
@@ -53,26 +59,26 @@ def _format_status(report: StatusReport) -> str:
 def _format_stop(result: StopResult) -> str:
     outcome = result.outcome
     if outcome is StopOutcome.STOPPED:
-        return "保存・停止・バックアップが完了しました。サーバーPCの電源を切ります。"
+        return "商いは仕舞いだ。世界を封じ、写しを取って、灯を落とした。またおいで。"
     if outcome is StopOutcome.REFUSED_PLAYERS_CONNECTED:
         if result.players is None:
             return (
-                "接続人数を確認できないため停止しません。"
-                "Maintainerは force:True で停止できます。"
+                "客がいるかどうかも分からねえ。うかつに店は閉められねえな。"
+                "……Maintainer なら force:True で押し通せるがよ。"
             )
         return (
-            f"接続中のプレイヤーがいるため停止しません（{result.players}人）。"
-            "Maintainerは force:True で停止できます。"
+            f"客がまだ {result.players} 人ばかり残ってら。無粋な真似はよせ。"
+            "……どうしてもってなら、Maintainer の力を見せてみな（force:True）。"
         )
     if outcome is StopOutcome.BUSY:
-        return "別の操作が実行中です。完了を待ってから再実行してください。"
+        return "今は別の商いの最中でな。少し待ちな。"
     if outcome is StopOutcome.UNREACHABLE:
-        return "サーバーPCへ接続できません。すでに停止している可能性があります。"
+        return "……箱に手が届かねえ。とっくに閉まってるのかもな。"
     if outcome is StopOutcome.SHUTDOWN_FAILED:
-        return "Palworldの停止に失敗しました。Botのログを確認してください。"
+        return "店じまいにしくじった。番人（ログ）に聞きな。"
     if outcome is StopOutcome.BACKUP_FAILED:
-        return "バックアップに失敗したため、サーバーPCの電源は切りません。"
-    return "停止とバックアップは完了しましたが、電源オフに失敗しました。"
+        return "写し（バックアップ）を取り損ねた。こんなときに灯は落とせねえ。"
+    return "店は畳んで写しも取った。だが灯が落ちきらねえ……妙だな。"
 
 
 def _member_role_ids(interaction: discord.Interaction) -> list[int]:
@@ -112,10 +118,10 @@ async def _reply(interaction: discord.Interaction, message: str) -> None:
 
 async def _ensure_player(interaction: discord.Interaction, config: BotConfig) -> bool:
     if not auth.is_allowed_context(config, interaction.guild_id, interaction.channel_id):
-        await _deny(interaction, "このチャンネルではコマンドを使用できません。")
+        await _deny(interaction, "ここは商いの場じゃねえ。指定の場所で声をかけな。")
         return False
     if not auth.has_player_access(config, _member_role_ids(interaction)):
-        await _deny(interaction, "このコマンドを使用する権限がありません。")
+        await _deny(interaction, "……お前さんにゃ、この商いはまだ早いな。出直しな。")
         return False
     return True
 
@@ -158,7 +164,7 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             return
         is_maintainer = auth.has_maintainer_access(config, _member_role_ids(interaction))
         if force and not is_maintainer:
-            await _deny(interaction, "force はMaintainerロールのみ使用できます。")
+            await _deny(interaction, "その力（force）は Maintainer だけのもんだ。身の程を知りな。")
             return
         if not await _acknowledge(interaction):
             return
@@ -173,6 +179,30 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
     return group
 
 
+def build_trade_command(config: BotConfig) -> app_commands.Command[Any, ..., None]:
+    """The ``/取引`` command: hand over one random Pal image. No role/channel gate."""
+    image_dir = Path(config.pal_image_dir) if config.pal_image_dir else pals.DEFAULT_PAL_IMAGE_DIR
+
+    async def trade_command(interaction: discord.Interaction) -> None:
+        if not await _acknowledge(interaction):
+            return
+        image = pals.draw_pal_image(image_dir)
+        if image is None:
+            await _reply(interaction, "……あいにく品切れだ。またおいで。")
+            return
+        message = "これはまずいな……" if pals.is_mystery_pal(image) else "ほらよ。"
+        try:
+            await interaction.followup.send(message, file=discord.File(image))
+        except discord.HTTPException:
+            logger.warning("failed to deliver the trade image")
+
+    return app_commands.Command(
+        name="取引",
+        description="闇商人からパルを引き取る",
+        callback=trade_command,
+    )
+
+
 class PalworldBotClient(discord.Client):
     """Discord client that registers the /server command group for one guild."""
 
@@ -180,10 +210,9 @@ class PalworldBotClient(discord.Client):
         super().__init__(intents=discord.Intents.default())
         self._config = config
         self.tree = app_commands.CommandTree(self)
-        self.tree.add_command(
-            build_server_group(config, manager),
-            guild=discord.Object(config.discord_guild_id),
-        )
+        guild = discord.Object(config.discord_guild_id)
+        self.tree.add_command(build_server_group(config, manager), guild=guild)
+        self.tree.add_command(build_trade_command(config), guild=guild)
 
     async def setup_hook(self) -> None:
         await self.tree.sync(guild=discord.Object(self._config.discord_guild_id))

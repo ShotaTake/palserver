@@ -17,6 +17,10 @@ logs/
 *.pid
 *.sock
 
+# Pal trade images (copyrighted game assets — keep local, per-machine)
+src/palworld_bot/assets/pals/*
+!src/palworld_bot/assets/pals/.gitkeep
+
 # Python
 __pycache__/
 *.py[cod]

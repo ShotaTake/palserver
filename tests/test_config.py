@@ -36,6 +36,12 @@ def test_audit_channel_is_optional() -> None:
     assert load_config(env).discord_audit_channel_id is None
 
 
+def test_pal_image_dir_is_optional() -> None:
+    assert load_config(BASE_ENV).pal_image_dir is None
+    env = {**BASE_ENV, "PAL_IMAGE_DIR": "/var/lib/palworld-bot/pals"}
+    assert load_config(env).pal_image_dir == "/var/lib/palworld-bot/pals"
+
+
 def test_missing_token_raises() -> None:
     env = {**BASE_ENV, "DISCORD_BOT_TOKEN": ""}
     with pytest.raises(ConfigError, match="DISCORD_BOT_TOKEN"):
