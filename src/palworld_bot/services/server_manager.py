@@ -174,13 +174,18 @@ class ServerManager:
             return StartOutcome.START_FAILED
 
     async def _wait_for_ssh(self) -> bool:
+        # Count each attempt's real cost — the poll interval *and* the probe's
+        # own timeout — so server_boot_timeout_seconds reflects wall-clock time.
+        # (An unreachable host makes each probe take ssh_command_timeout_seconds,
+        # which would otherwise not be counted at all.)
         waited = 0.0
+        per_attempt = _BOOT_POLL_INTERVAL_SECONDS + self._config.ssh_command_timeout_seconds
         while waited < self._config.server_boot_timeout_seconds:
             await self._sleep(_BOOT_POLL_INTERVAL_SECONDS)
-            waited += _BOOT_POLL_INTERVAL_SECONDS
             probe = await self._ssh_runner(RemoteCommand.STATUS)
             if not probe.connection_failed:
                 return True
+            waited += per_attempt
         return False
 
     async def stop(self, *, allow_with_players: bool) -> StopResult:
