@@ -17,10 +17,12 @@ CONFIG = load_config(
 )
 
 
-def report(*, running: bool, players: int | None) -> StatusReport:
+def report(
+    *, running: bool, players: int | None, names: tuple[str, ...] = ()
+) -> StatusReport:
     state = PalworldState.RUNNING if running else PalworldState.STOPPED
     pc = PcState.ONLINE if running or players is not None else PcState.OFFLINE
-    return StatusReport(pc, state, players, None, datetime(2026, 7, 25, 12, 0, 0))
+    return StatusReport(pc, state, players, None, datetime(2026, 7, 25, 12, 0, 0), names)
 
 
 OFFLINE = StatusReport(
@@ -142,6 +144,38 @@ async def test_offline_does_not_accumulate_idle() -> None:
     await monitor.tick()  # offline -> reset
     await monitor.tick()  # idle 60s again; threshold (120s) not reached
     assert manager.stop_calls == []
+
+
+async def test_join_and_leave_notifications() -> None:
+    manager = FakeManager(
+        [
+            report(running=True, players=1, names=("Alice",)),  # baseline
+            report(running=True, players=2, names=("Alice", "Bob")),  # Bob joins
+            report(running=True, players=1, names=("Alice",)),  # Bob leaves
+        ]
+    )
+    monitor, sent = make_monitor(manager)
+    await monitor.tick()  # baseline: no per-player announcement
+    assert not any("Alice" in m for m in sent)
+    await monitor.tick()
+    assert any("Bob" in m and "くぐった" in m for m in sent)
+    await monitor.tick()
+    assert any("Bob" in m and "去って" in m for m in sent)
+
+
+async def test_missing_roster_does_not_emit_false_leaves() -> None:
+    manager = FakeManager(
+        [
+            report(running=True, players=1, names=("Alice",)),  # baseline {Alice}
+            report(running=True, players=2, names=()),  # names lookup failed -> skip
+            report(running=True, players=1, names=("Alice",)),  # unchanged
+        ]
+    )
+    monitor, sent = make_monitor(manager)
+    await monitor.tick()
+    await monitor.tick()
+    await monitor.tick()
+    assert sent == []
 
 
 async def test_stop_refusal_is_reported_not_fatal() -> None:

@@ -18,6 +18,8 @@ from palworld_bot import auth, pals
 from palworld_bot.config import BotConfig
 from palworld_bot.services.monitor import ServerMonitor
 from palworld_bot.services.server_manager import (
+    PalworldState,
+    PcState,
     RestartOutcome,
     ServerManager,
     StartOutcome,
@@ -91,6 +93,19 @@ def _format_stop(result: StopResult) -> str:
     if outcome is StopOutcome.BACKUP_FAILED:
         return "写し（バックアップ）を取り損ねた。こんなときに灯は落とせねえ。"
     return "店は畳んで写しも取った。だが灯が落ちきらねえ……妙だな。"
+
+
+def _format_presence(report: StatusReport) -> tuple[str, discord.Status]:
+    """Bot activity text + status dot reflecting the current server state."""
+    if report.pc is PcState.OFFLINE or report.palworld is PalworldState.STOPPED:
+        return "サーバー停止中", discord.Status.idle
+    if report.palworld is PalworldState.RUNNING:
+        if report.players is None:
+            return "起動中", discord.Status.online
+        if report.max_players is not None:
+            return f"{report.players}/{report.max_players}人 プレイ中", discord.Status.online
+        return f"{report.players}人 プレイ中", discord.Status.online
+    return "状態確認中", discord.Status.idle
 
 
 def _member_role_ids(interaction: discord.Interaction) -> list[int]:
@@ -242,6 +257,7 @@ class PalworldBotClient(discord.Client):
         self._config = config
         self._manager = manager
         self._monitor_task: asyncio.Task[None] | None = None
+        self._last_presence: tuple[str, discord.Status] | None = None
         self.tree = app_commands.CommandTree(self)
         guild = discord.Object(config.discord_guild_id)
         self.tree.add_command(build_server_group(config, manager), guild=guild)
@@ -253,8 +269,23 @@ class PalworldBotClient(discord.Client):
 
     async def _run_monitor(self) -> None:
         await self.wait_until_ready()
-        monitor = ServerMonitor(self._config, self._manager, self._send_notification)
+        monitor = ServerMonitor(
+            self._config,
+            self._manager,
+            self._send_notification,
+            on_report=self._update_presence,
+        )
         await monitor.run()
+
+    async def _update_presence(self, report: StatusReport) -> None:
+        text, status = _format_presence(report)
+        if (text, status) == self._last_presence:
+            return
+        self._last_presence = (text, status)
+        try:
+            await self.change_presence(status=status, activity=discord.Game(name=text))
+        except discord.HTTPException:
+            logger.warning("failed to update presence")
 
     async def _send_notification(self, message: str) -> None:
         channel_id = (
@@ -274,3 +305,10 @@ class PalworldBotClient(discord.Client):
 
     async def on_ready(self) -> None:
         logger.info("logged in as %s", self.user)
+        if self._last_presence is None:
+            try:
+                await self.change_presence(
+                    status=discord.Status.idle, activity=discord.Game(name="状態確認中…")
+                )
+            except discord.HTTPException:
+                logger.warning("failed to set the initial presence")

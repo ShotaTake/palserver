@@ -27,6 +27,7 @@ from palworld_bot.services.server_manager import (
 logger = logging.getLogger(__name__)
 
 Notifier = Callable[[str], Awaitable[None]]
+Reporter = Callable[[StatusReport], Awaitable[None]]
 Sleeper = Callable[[float], Awaitable[None]]
 
 _OPENED_MESSAGE = "……灯が入った。開店だ。(Palworld: running)"
@@ -44,14 +45,18 @@ class ServerMonitor:
         manager: ServerManager,
         notify: Notifier,
         *,
+        on_report: Reporter | None = None,
         sleep: Sleeper | None = None,
     ) -> None:
         self._config = config
         self._manager = manager
         self._notify = notify
+        self._on_report = on_report
         self._sleep: Sleeper = sleep if sleep is not None else self._asyncio_sleep
         self._last_running: bool | None = None
         self._idle_seconds = 0.0
+        self._known_players: frozenset[str] = frozenset()
+        self._players_tracked = False
 
     @staticmethod
     async def _asyncio_sleep(seconds: float) -> None:
@@ -69,7 +74,13 @@ class ServerMonitor:
         report = await self._manager.status()
         running = report.palworld is PalworldState.RUNNING
         await self._handle_transition(running)
+        await self._handle_players(report, running)
         await self._handle_idle(report, running)
+        if self._on_report is not None:
+            try:
+                await self._on_report(report)
+            except Exception:
+                logger.warning("failed to report status for presence")
 
     async def _handle_transition(self, running: bool) -> None:
         previous = self._last_running
@@ -77,6 +88,29 @@ class ServerMonitor:
         if previous is None or previous == running:
             return
         await self._safe_notify(_OPENED_MESSAGE if running else _CLOSED_MESSAGE)
+
+    async def _handle_players(self, report: StatusReport, running: bool) -> None:
+        if not running or report.players is None:
+            # No reliable roster: forget it so the next running tick re-baselines
+            # (and don't announce departures — the close notification covers that).
+            self._known_players = frozenset()
+            self._players_tracked = False
+            return
+        # Trust the name list only when it matches the count; the names lookup
+        # can fail independently of the count.
+        if len(report.player_names) != report.players:
+            return
+        current = frozenset(report.player_names)
+        if not self._players_tracked:
+            # First roster after (re)start becomes the baseline, no announcements.
+            self._known_players = current
+            self._players_tracked = True
+            return
+        for name in sorted(current - self._known_players):
+            await self._safe_notify(f"{name} が暖簾をくぐった。")
+        for name in sorted(self._known_players - current):
+            await self._safe_notify(f"{name} が去っていった。")
+        self._known_players = current
 
     async def _handle_idle(self, report: StatusReport, running: bool) -> None:
         threshold_minutes = self._config.idle_shutdown_minutes

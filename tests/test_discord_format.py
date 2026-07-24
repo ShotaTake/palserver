@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from palworld_bot.discord_app import _format_status, _format_stop
+import discord
+
+from palworld_bot.discord_app import _format_presence, _format_status, _format_stop
 from palworld_bot.services.server_manager import (
     PalworldState,
     PcState,
@@ -8,6 +10,8 @@ from palworld_bot.services.server_manager import (
     StopOutcome,
     StopResult,
 )
+
+_NOW = datetime(2026, 7, 25, 12, 0, 0)
 
 
 def test_status_keeps_data_readable_under_persona() -> None:
@@ -53,3 +57,23 @@ def test_stop_refused_still_reports_count_and_force_hint() -> None:
     text = _format_stop(StopResult(StopOutcome.REFUSED_PLAYERS_CONNECTED, players=2))
     assert "2" in text
     assert "force:True" in text
+
+
+def test_presence_running_shows_count_and_online() -> None:
+    report = StatusReport(PcState.ONLINE, PalworldState.RUNNING, 3, 8, _NOW)
+    text, status = _format_presence(report)
+    assert "3" in text and "8" in text
+    assert status is discord.Status.online
+
+
+def test_presence_stopped_is_idle() -> None:
+    report = StatusReport(PcState.ONLINE, PalworldState.STOPPED, 0, 8, _NOW)
+    text, status = _format_presence(report)
+    assert "停止" in text
+    assert status is discord.Status.idle
+
+
+def test_presence_offline_is_idle() -> None:
+    report = StatusReport(PcState.OFFLINE, PalworldState.UNKNOWN, None, None, _NOW)
+    _text, status = _format_presence(report)
+    assert status is discord.Status.idle
