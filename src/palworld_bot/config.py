@@ -39,6 +39,8 @@ class BotConfig:
     server_boot_timeout_seconds: int
     ssh_command_timeout_seconds: int
     stop_wait_seconds: int
+    idle_shutdown_minutes: int
+    status_poll_interval_seconds: int
     log_level: str
     pal_image_dir: str | None
 
@@ -78,6 +80,19 @@ def _positive_int(env: Mapping[str, str], key: str, default: int) -> int:
         raise ConfigError(f"{key} must be an integer") from None
     if value <= 0:
         raise ConfigError(f"{key} must be positive")
+    return value
+
+
+def _non_negative_int(env: Mapping[str, str], key: str, default: int) -> int:
+    raw = env.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigError(f"{key} must be an integer") from None
+    if value < 0:
+        raise ConfigError(f"{key} must be zero or positive")
     return value
 
 
@@ -122,6 +137,8 @@ def load_config(env: Mapping[str, str]) -> BotConfig:
         server_boot_timeout_seconds=_positive_int(env, "SERVER_BOOT_TIMEOUT_SECONDS", 240),
         ssh_command_timeout_seconds=_positive_int(env, "SSH_COMMAND_TIMEOUT_SECONDS", 20),
         stop_wait_seconds=_positive_int(env, "STOP_WAIT_SECONDS", 60),
+        idle_shutdown_minutes=_non_negative_int(env, "IDLE_SHUTDOWN_MINUTES", 30),
+        status_poll_interval_seconds=_positive_int(env, "STATUS_POLL_INTERVAL_SECONDS", 60),
         log_level=log_level,
         pal_image_dir=env.get("PAL_IMAGE_DIR", "").strip() or None,
     )

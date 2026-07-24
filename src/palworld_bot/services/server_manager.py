@@ -42,6 +42,7 @@ class StatusReport:
     players: int | None
     max_players: int | None
     checked_at: datetime
+    player_names: tuple[str, ...] = ()
 
 
 class StartOutcome(Enum):
@@ -50,6 +51,13 @@ class StartOutcome(Enum):
     BUSY = auto()
     BOOT_TIMEOUT = auto()
     START_FAILED = auto()
+
+
+class RestartOutcome(Enum):
+    RESTARTED = auto()
+    BUSY = auto()
+    UNREACHABLE = auto()
+    RESTART_FAILED = auto()
 
 
 class StopOutcome(Enum):
@@ -96,6 +104,17 @@ def _parse_players(stdout: str) -> tuple[int | None, int | None]:
     return players, max_players
 
 
+def _parse_player_names(stdout: str) -> tuple[str, ...]:
+    names = []
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if line.startswith("player="):
+            name = line.removeprefix("player=").strip()
+            if name:
+                names.append(name)
+    return tuple(names)
+
+
 class ServerManager:
     """Orchestrates the three MVP operations against the remote server."""
 
@@ -120,8 +139,8 @@ class ServerManager:
         await asyncio.sleep(seconds)
 
     async def _run_ssh(self, command: RemoteCommand) -> SshResult:
-        # Shutdown and backup can legitimately take longer than a status probe.
-        if command in (RemoteCommand.SHUTDOWN, RemoteCommand.BACKUP):
+        # Shutdown, restart, and backup can take longer than a status probe.
+        if command in (RemoteCommand.SHUTDOWN, RemoteCommand.RESTART, RemoteCommand.BACKUP):
             timeout: float = self._config.stop_wait_seconds
         else:
             timeout = self._config.ssh_command_timeout_seconds
@@ -146,13 +165,17 @@ class ServerManager:
         palworld = _parse_palworld_state(result.stdout)
         players: int | None = None
         max_players: int | None = None
+        player_names: tuple[str, ...] = ()
         if palworld is PalworldState.RUNNING:
             players_result = await self._ssh_runner(RemoteCommand.PLAYERS)
             if players_result.ok:
                 players, max_players = _parse_players(players_result.stdout)
+                player_names = _parse_player_names(players_result.stdout)
         elif palworld is PalworldState.STOPPED:
             players = 0
-        return StatusReport(PcState.ONLINE, palworld, players, max_players, checked_at)
+        return StatusReport(
+            PcState.ONLINE, palworld, players, max_players, checked_at, player_names
+        )
 
     async def start(self) -> StartOutcome:
         if self._lock.locked():
@@ -172,6 +195,22 @@ class ServerManager:
             if verify.ok and _parse_palworld_state(verify.stdout) is PalworldState.RUNNING:
                 return StartOutcome.STARTED
             return StartOutcome.START_FAILED
+
+    async def restart(self) -> RestartOutcome:
+        """Save the world and restart only the Palworld service (no poweroff)."""
+        if self._lock.locked():
+            return RestartOutcome.BUSY
+        async with self._lock:
+            probe = await self._ssh_runner(RemoteCommand.STATUS)
+            if probe.connection_failed:
+                return RestartOutcome.UNREACHABLE
+            result = await self._ssh_runner(RemoteCommand.RESTART)
+            if not result.ok:
+                return RestartOutcome.RESTART_FAILED
+            verify = await self._ssh_runner(RemoteCommand.STATUS)
+            if verify.ok and _parse_palworld_state(verify.stdout) is PalworldState.RUNNING:
+                return RestartOutcome.RESTARTED
+            return RestartOutcome.RESTART_FAILED
 
     async def _wait_for_ssh(self) -> bool:
         # Count each attempt's real cost — the poll interval *and* the probe's

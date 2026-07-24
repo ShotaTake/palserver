@@ -2,6 +2,7 @@ from palworld_bot.config import load_config
 from palworld_bot.services.server_manager import (
     PalworldState,
     PcState,
+    RestartOutcome,
     ServerManager,
     StartOutcome,
     StopOutcome,
@@ -90,6 +91,54 @@ async def test_status_stopped_reports_zero_players() -> None:
     report = await manager.status()
     assert report.palworld is PalworldState.STOPPED
     assert report.players == 0
+
+
+async def test_status_reports_player_names() -> None:
+    ssh = FakeSsh(
+        {
+            RemoteCommand.STATUS: [OK_RUNNING],
+            RemoteCommand.PLAYERS: [
+                SshResult(
+                    exit_code=0,
+                    stdout="players=2\nmax_players=8\nplayer=Alice\nplayer=Bob\n",
+                )
+            ],
+        }
+    )
+    manager, _ = make_manager(ssh)
+    report = await manager.status()
+    assert report.players == 2
+    assert report.player_names == ("Alice", "Bob")
+
+
+async def test_restart_success() -> None:
+    ssh = FakeSsh(
+        {
+            RemoteCommand.STATUS: [OK_RUNNING, OK_RUNNING],
+            RemoteCommand.RESTART: [SshResult(exit_code=0, stdout="restarted\n")],
+        }
+    )
+    manager, _ = make_manager(ssh)
+    assert await manager.restart() is RestartOutcome.RESTARTED
+    assert RemoteCommand.RESTART in ssh.calls
+
+
+async def test_restart_unreachable() -> None:
+    ssh = FakeSsh({RemoteCommand.STATUS: [CONNECTION_FAILED]})
+    manager, _ = make_manager(ssh)
+    assert await manager.restart() is RestartOutcome.UNREACHABLE
+    assert RemoteCommand.RESTART not in ssh.calls
+
+
+async def test_restart_failure_when_not_running_after() -> None:
+    ssh = FakeSsh(
+        {
+            RemoteCommand.STATUS: [OK_RUNNING, OK_STOPPED],
+            RemoteCommand.RESTART: [OK_EMPTY],
+        }
+    )
+    manager, _ = make_manager(ssh)
+    assert await manager.restart() is RestartOutcome.RESTART_FAILED
 
 
 async def test_start_when_already_running() -> None:
@@ -215,5 +264,6 @@ async def test_operations_report_busy_while_lock_is_held() -> None:
     manager, _ = make_manager(ssh)
     async with manager._lock:  # noqa: SLF001 - simulate an in-flight operation
         assert await manager.start() is StartOutcome.BUSY
+        assert await manager.restart() is RestartOutcome.BUSY
         stop_result = await manager.stop(allow_with_players=False)
         assert stop_result.outcome is StopOutcome.BUSY

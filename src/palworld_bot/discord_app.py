@@ -6,6 +6,7 @@ command output to Discord.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,9 @@ from discord import app_commands
 
 from palworld_bot import auth, pals
 from palworld_bot.config import BotConfig
+from palworld_bot.services.monitor import ServerMonitor
 from palworld_bot.services.server_manager import (
+    RestartOutcome,
     ServerManager,
     StartOutcome,
     StatusReport,
@@ -39,6 +42,13 @@ _START_MESSAGES = {
     StartOutcome.START_FAILED: "……しくじった。番人（ログ）に事情を聞きな。",
 }
 
+_RESTART_MESSAGES = {
+    RestartOutcome.RESTARTED: "一度店を畳んで、開け直した。……文句はねえな？",
+    RestartOutcome.BUSY: "今は別の商いの最中でな。少し待ちな。",
+    RestartOutcome.UNREACHABLE: "……箱に手が届かねえ。店が開いてるかも怪しいぜ。",
+    RestartOutcome.RESTART_FAILED: "建て直しにしくじった。番人（ログ）に聞きな。",
+}
+
 
 def _format_status(report: StatusReport) -> str:
     lines = [
@@ -52,6 +62,8 @@ def _format_status(report: StatusReport) -> str:
             lines.append(f"接続人数: {report.players} / {report.max_players}")
         else:
             lines.append(f"接続人数: {report.players}")
+    if report.player_names:
+        lines.append("客: " + ", ".join(report.player_names))
     lines.append(f"確認時刻: {report.checked_at:%Y-%m-%d %H:%M:%S}")
     return "\n".join(lines)
 
@@ -157,6 +169,25 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             return
         await _reply(interaction, _START_MESSAGES[outcome])
 
+    @group.command(
+        name="restart", description="保存してからPalworldのみ再起動します（Maintainer専用）"
+    )
+    async def restart_command(interaction: discord.Interaction) -> None:
+        if not await _ensure_player(interaction, config):
+            return
+        if not auth.has_maintainer_access(config, _member_role_ids(interaction)):
+            await _deny(interaction, "店の建て直しは Maintainer だけの仕事だ。")
+            return
+        if not await _acknowledge(interaction):
+            return
+        try:
+            outcome = await manager.restart()
+        except Exception:
+            logger.exception("restart command failed")
+            await _reply(interaction, _GENERIC_ERROR_MESSAGE)
+            return
+        await _reply(interaction, _RESTART_MESSAGES[outcome])
+
     @group.command(name="stop", description="Palworldを安全に停止します")
     @app_commands.describe(force="接続者がいても停止します（Maintainer専用の確認操作）")
     async def stop_command(interaction: discord.Interaction, force: bool = False) -> None:
@@ -209,6 +240,8 @@ class PalworldBotClient(discord.Client):
     def __init__(self, config: BotConfig, manager: ServerManager) -> None:
         super().__init__(intents=discord.Intents.default())
         self._config = config
+        self._manager = manager
+        self._monitor_task: asyncio.Task[None] | None = None
         self.tree = app_commands.CommandTree(self)
         guild = discord.Object(config.discord_guild_id)
         self.tree.add_command(build_server_group(config, manager), guild=guild)
@@ -216,6 +249,28 @@ class PalworldBotClient(discord.Client):
 
     async def setup_hook(self) -> None:
         await self.tree.sync(guild=discord.Object(self._config.discord_guild_id))
+        self._monitor_task = asyncio.create_task(self._run_monitor())
+
+    async def _run_monitor(self) -> None:
+        await self.wait_until_ready()
+        monitor = ServerMonitor(self._config, self._manager, self._send_notification)
+        await monitor.run()
+
+    async def _send_notification(self, message: str) -> None:
+        channel_id = (
+            self._config.discord_audit_channel_id or self._config.discord_command_channel_id
+        )
+        channel = self.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(channel_id)
+            except discord.HTTPException:
+                logger.warning("could not fetch the notification channel")
+                return
+        if not isinstance(channel, discord.abc.Messageable):
+            logger.warning("notification channel does not accept messages")
+            return
+        await channel.send(message)
 
     async def on_ready(self) -> None:
         logger.info("logged in as %s", self.user)

@@ -36,6 +36,23 @@ def test_audit_channel_is_optional() -> None:
     assert load_config(env).discord_audit_channel_id is None
 
 
+def test_monitor_settings_defaults() -> None:
+    config = load_config(BASE_ENV)
+    assert config.idle_shutdown_minutes == 30
+    assert config.status_poll_interval_seconds == 60
+
+
+def test_idle_shutdown_zero_is_allowed() -> None:
+    env = {**BASE_ENV, "IDLE_SHUTDOWN_MINUTES": "0"}
+    assert load_config(env).idle_shutdown_minutes == 0
+
+
+def test_negative_idle_shutdown_raises() -> None:
+    env = {**BASE_ENV, "IDLE_SHUTDOWN_MINUTES": "-5"}
+    with pytest.raises(ConfigError, match="IDLE_SHUTDOWN_MINUTES"):
+        load_config(env)
+
+
 def test_pal_image_dir_is_optional() -> None:
     assert load_config(BASE_ENV).pal_image_dir is None
     env = {**BASE_ENV, "PAL_IMAGE_DIR": "/var/lib/palworld-bot/pals"}

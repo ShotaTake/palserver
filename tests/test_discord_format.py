@@ -29,6 +29,26 @@ def test_status_without_max_players() -> None:
     assert "接続人数: 1" in _format_status(report)
 
 
+def test_status_shows_player_names_when_present() -> None:
+    base = StatusReport(
+        PcState.ONLINE,
+        PalworldState.RUNNING,
+        2,
+        8,
+        datetime(2026, 7, 25, 12, 0, 0),
+        ("Alice", "Bob"),
+    )
+    text = _format_status(base)
+    assert "客: Alice, Bob" in text
+
+
+def test_status_omits_player_names_when_empty() -> None:
+    base = StatusReport(
+        PcState.ONLINE, PalworldState.RUNNING, 0, 8, datetime(2026, 7, 25, 12, 0, 0)
+    )
+    assert "客:" not in _format_status(base)
+
+
 def test_stop_refused_still_reports_count_and_force_hint() -> None:
     text = _format_stop(StopResult(StopOutcome.REFUSED_PLAYERS_CONNECTED, players=2))
     assert "2" in text

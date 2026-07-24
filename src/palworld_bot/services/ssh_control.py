@@ -25,6 +25,7 @@ class RemoteCommand(Enum):
     STATUS = "status"
     START = "start"
     PLAYERS = "players"
+    RESTART = "restart"
     SHUTDOWN = "shutdown"
     BACKUP = "backup"
     POWEROFF = "poweroff"

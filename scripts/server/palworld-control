@@ -93,6 +93,15 @@ cmd_players() {
   if [ -n "$max_players" ] && [ "$max_players" != "0" ]; then
     printf 'max_players=%s\n' "$max_players"
   fi
+  # Connected player names, one per line: player=<name>. Best effort — a
+  # failure here must not break the count above.
+  local names_body
+  names_body="$(_curl GET players 2>/dev/null || true)"
+  printf '%s\n' "$names_body" \
+    | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed -E 's/^"name"[[:space:]]*:[[:space:]]*"//; s/"$//' \
+    | sed 's/^/player=/' \
+    || true
 }
 
 cmd_shutdown() {
@@ -124,6 +133,15 @@ cmd_shutdown() {
   printf 'stopped\n'
 }
 
+cmd_restart() {
+  # Save + graceful stop (cmd_shutdown is a no-op when already stopped),
+  # then start the service again. Uses only the sudo rules start/stop
+  # already granted; the PC never powers off.
+  cmd_shutdown >/dev/null
+  sudo -n systemctl start "$PALWORLD_SERVICE"
+  printf 'restarted\n'
+}
+
 cmd_backup() {
   "$PALWORLD_BACKUP_SCRIPT"
 }
@@ -136,6 +154,7 @@ case "${1:-}" in
   status) cmd_status ;;
   start) cmd_start ;;
   players) cmd_players ;;
+  restart) cmd_restart ;;
   shutdown) cmd_shutdown ;;
   backup) cmd_backup ;;
   poweroff) cmd_poweroff ;;
