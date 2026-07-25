@@ -41,6 +41,8 @@ class BotConfig:
     stop_wait_seconds: int
     idle_shutdown_minutes: int
     status_poll_interval_seconds: int
+    game_port: int
+    public_ip_check_interval_seconds: int
     log_level: str
     pal_image_dir: str | None
 
@@ -119,6 +121,10 @@ def load_config(env: Mapping[str, str]) -> BotConfig:
     if log_level not in _ALLOWED_LOG_LEVELS:
         raise ConfigError("LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR")
 
+    game_port = _positive_int(env, "GAME_PORT", 8211)
+    if game_port > 65535:
+        raise ConfigError("GAME_PORT must be between 1 and 65535")
+
     return BotConfig(
         discord_bot_token=_require(env, "DISCORD_BOT_TOKEN"),
         discord_guild_id=_require_int(env, "DISCORD_GUILD_ID"),
@@ -139,6 +145,10 @@ def load_config(env: Mapping[str, str]) -> BotConfig:
         stop_wait_seconds=_positive_int(env, "STOP_WAIT_SECONDS", 60),
         idle_shutdown_minutes=_non_negative_int(env, "IDLE_SHUTDOWN_MINUTES", 30),
         status_poll_interval_seconds=_positive_int(env, "STATUS_POLL_INTERVAL_SECONDS", 60),
+        game_port=game_port,
+        public_ip_check_interval_seconds=_non_negative_int(
+            env, "PUBLIC_IP_CHECK_INTERVAL_SECONDS", 300
+        ),
         log_level=log_level,
         pal_image_dir=env.get("PAL_IMAGE_DIR", "").strip() or None,
     )

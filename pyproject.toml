@@ -9,6 +9,7 @@ description = "Secure Discord controller for a private Palworld server"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "aiohttp>=3.9,<4",
   "discord.py>=2.3,<3",
   "python-dotenv>=1,<2",
 ]

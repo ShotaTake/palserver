@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 Notifier = Callable[[str], Awaitable[None]]
 Reporter = Callable[[StatusReport], Awaitable[None]]
 Sleeper = Callable[[float], Awaitable[None]]
+PublicIpProvider = Callable[[], Awaitable[str | None]]
 
 _OPENED_MESSAGE = "……灯が入った。開店だ。(Palworld: running)"
 _CLOSED_MESSAGE = "灯が落ちた。店じまいだ。(Palworld: stopped)"
@@ -46,17 +47,22 @@ class ServerMonitor:
         notify: Notifier,
         *,
         on_report: Reporter | None = None,
+        public_ip_provider: PublicIpProvider | None = None,
         sleep: Sleeper | None = None,
     ) -> None:
         self._config = config
         self._manager = manager
         self._notify = notify
         self._on_report = on_report
+        self._public_ip_provider = public_ip_provider
         self._sleep: Sleeper = sleep if sleep is not None else self._asyncio_sleep
         self._last_running: bool | None = None
         self._idle_seconds = 0.0
         self._known_players: frozenset[str] = frozenset()
         self._players_tracked = False
+        self._public_ip: str | None = None
+        # Start due so the first tick establishes the baseline address.
+        self._seconds_since_ip_check = float("inf")
 
     @staticmethod
     async def _asyncio_sleep(seconds: float) -> None:
@@ -71,6 +77,8 @@ class ServerMonitor:
                 logger.exception("monitor tick failed")
 
     async def tick(self) -> None:
+        # Refresh the address first so an "opened" notice can carry it.
+        await self._handle_public_ip()
         report = await self._manager.status()
         running = report.palworld is PalworldState.RUNNING
         await self._handle_transition(running)
@@ -82,12 +90,54 @@ class ServerMonitor:
             except Exception:
                 logger.warning("failed to report status for presence")
 
+    @property
+    def public_ip(self) -> str | None:
+        """Most recent successfully looked-up public address, if any."""
+        return self._public_ip
+
+    def address_line(self) -> str | None:
+        """`ip:port` for players to connect to, when the address is known."""
+        if self._public_ip is None:
+            return None
+        return f"{self._public_ip}:{self._config.game_port}"
+
+    async def _handle_public_ip(self) -> None:
+        interval = self._config.public_ip_check_interval_seconds
+        if self._public_ip_provider is None or interval <= 0:
+            return
+        self._seconds_since_ip_check += self._config.status_poll_interval_seconds
+        if self._seconds_since_ip_check < interval:
+            return
+        self._seconds_since_ip_check = 0.0
+        try:
+            address = await self._public_ip_provider()
+        except Exception:
+            logger.warning("public IP lookup raised")
+            return
+        # A failed lookup keeps the last known value: never announce on flapping.
+        if address is None or address == self._public_ip:
+            return
+        previous = self._public_ip
+        self._public_ip = address
+        if previous is None:
+            return  # First successful read is the baseline.
+        await self._safe_notify(
+            f"店の場所が変わった。今度からはこっちだ……{address}:{self._config.game_port}"
+        )
+
     async def _handle_transition(self, running: bool) -> None:
         previous = self._last_running
         self._last_running = running
         if previous is None or previous == running:
             return
-        await self._safe_notify(_OPENED_MESSAGE if running else _CLOSED_MESSAGE)
+        if not running:
+            await self._safe_notify(_CLOSED_MESSAGE)
+            return
+        message = _OPENED_MESSAGE
+        address = self.address_line()
+        if address is not None:
+            message = f"{message}\n場所はここだ……{address}"
+        await self._safe_notify(message)
 
     async def _handle_players(self, report: StatusReport, running: bool) -> None:
         if not running or report.players is None:

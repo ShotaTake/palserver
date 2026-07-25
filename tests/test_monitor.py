@@ -56,6 +56,20 @@ def make_monitor(manager: FakeManager) -> tuple[ServerMonitor, list[str]]:
     return monitor, sent
 
 
+class FakeIpProvider:
+    """Returns queued answers; the last one repeats. None means lookup failed."""
+
+    def __init__(self, answers: list[str | None]) -> None:
+        self._answers = list(answers)
+        self.calls = 0
+
+    async def __call__(self) -> str | None:
+        self.calls += 1
+        if len(self._answers) > 1:
+            return self._answers.pop(0)
+        return self._answers[0]
+
+
 async def test_idle_threshold_triggers_safe_stop() -> None:
     manager = FakeManager([report(running=True, players=0)])
     monitor, sent = make_monitor(manager)
@@ -175,6 +189,97 @@ async def test_missing_roster_does_not_emit_false_leaves() -> None:
     await monitor.tick()
     await monitor.tick()
     await monitor.tick()
+    assert sent == []
+
+
+def make_ip_monitor(
+    manager: FakeManager, provider: FakeIpProvider, *, interval: str = "60"
+) -> tuple[ServerMonitor, list[str]]:
+    config = load_config(
+        {
+            **BASE_ENV,
+            "STATUS_POLL_INTERVAL_SECONDS": "60",
+            "PUBLIC_IP_CHECK_INTERVAL_SECONDS": interval,
+        }
+    )
+    sent: list[str] = []
+
+    async def notify(message: str) -> None:
+        sent.append(message)
+
+    monitor = ServerMonitor(
+        config,
+        manager,  # type: ignore[arg-type]
+        notify,
+        public_ip_provider=provider,
+    )
+    return monitor, sent
+
+
+async def test_public_ip_change_is_announced() -> None:
+    manager = FakeManager([report(running=True, players=1)])
+    provider = FakeIpProvider(["203.0.113.5", "198.51.100.7"])
+    monitor, sent = make_ip_monitor(manager, provider)
+    await monitor.tick()  # baseline, no announcement
+    assert not any("203.0.113.5" in m for m in sent)
+    await monitor.tick()
+    assert any("198.51.100.7:8211" in m for m in sent)
+    assert monitor.address_line() == "198.51.100.7:8211"
+
+
+async def test_failed_lookup_keeps_last_address_and_stays_quiet() -> None:
+    manager = FakeManager([report(running=True, players=1)])
+    provider = FakeIpProvider(["203.0.113.5", None, None])
+    monitor, sent = make_ip_monitor(manager, provider)
+    await monitor.tick()  # baseline
+    await monitor.tick()  # lookup fails
+    await monitor.tick()
+    assert sent == []
+    assert monitor.address_line() == "203.0.113.5:8211"
+
+
+async def test_public_ip_respects_check_interval() -> None:
+    manager = FakeManager([report(running=True, players=1)])
+    provider = FakeIpProvider(["203.0.113.5"])
+    # Poll is 60s but the IP is only checked every 300s.
+    monitor, _ = make_ip_monitor(manager, provider, interval="300")
+    for _ in range(5):
+        await monitor.tick()
+    assert provider.calls == 1  # baseline only; 240s of polling is below the interval
+    await monitor.tick()  # 300s elapsed
+    assert provider.calls == 2
+
+
+async def test_public_ip_disabled_when_interval_zero() -> None:
+    manager = FakeManager([report(running=True, players=1)])
+    provider = FakeIpProvider(["203.0.113.5"])
+    monitor, _ = make_ip_monitor(manager, provider, interval="0")
+    for _ in range(5):
+        await monitor.tick()
+    assert provider.calls == 0
+    assert monitor.address_line() is None
+
+
+async def test_opened_notice_includes_address_when_known() -> None:
+    manager = FakeManager(
+        [
+            report(running=False, players=0),
+            report(running=True, players=0),
+        ]
+    )
+    provider = FakeIpProvider(["203.0.113.5"])
+    monitor, sent = make_ip_monitor(manager, provider)
+    await monitor.tick()  # baseline (stopped)
+    await monitor.tick()  # opens
+    opened = [m for m in sent if "開店" in m]
+    assert opened and "203.0.113.5:8211" in opened[0]
+
+
+async def test_no_provider_means_no_address() -> None:
+    manager = FakeManager([report(running=True, players=1)])
+    monitor, sent = make_monitor(manager)
+    await monitor.tick()
+    assert monitor.address_line() is None
     assert sent == []
 
 

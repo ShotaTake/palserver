@@ -16,6 +16,7 @@ from discord import app_commands
 
 from palworld_bot import auth, pals
 from palworld_bot.config import BotConfig
+from palworld_bot.services import public_ip
 from palworld_bot.services.monitor import ServerMonitor
 from palworld_bot.services.server_manager import (
     PalworldState,
@@ -93,6 +94,15 @@ def _format_stop(result: StopResult) -> str:
     if outcome is StopOutcome.BACKUP_FAILED:
         return "写し（バックアップ）を取り損ねた。こんなときに灯は落とせねえ。"
     return "店は畳んで写しも取った。だが灯が落ちきらねえ……妙だな。"
+
+
+def _format_address(address: str | None, port: int) -> str:
+    if address is None:
+        return "……今は店の場所が掴めねえ。少し置いてから、もう一度聞きな。"
+    return (
+        f"今の店の場所はここだ。\n`{address}:{port}`\n"
+        "……時々変わる。繋がらなくなったら、また聞きに来な。"
+    )
 
 
 def _format_presence(report: StatusReport) -> tuple[str, discord.Status]:
@@ -184,6 +194,20 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             return
         await _reply(interaction, _START_MESSAGES[outcome])
 
+    @group.command(name="address", description="今の接続先アドレスを表示します")
+    async def address_command(interaction: discord.Interaction) -> None:
+        if not await _ensure_player(interaction, config):
+            return
+        if not await _acknowledge(interaction):
+            return
+        try:
+            address = await public_ip.fetch_public_ip()
+        except Exception:
+            logger.exception("address command failed")
+            await _reply(interaction, _GENERIC_ERROR_MESSAGE)
+            return
+        await _reply(interaction, _format_address(address, config.game_port))
+
     @group.command(
         name="restart", description="保存してからPalworldのみ再起動します（Maintainer専用）"
     )
@@ -274,6 +298,7 @@ class PalworldBotClient(discord.Client):
             self._manager,
             self._send_notification,
             on_report=self._update_presence,
+            public_ip_provider=public_ip.fetch_public_ip,
         )
         await monitor.run()
 

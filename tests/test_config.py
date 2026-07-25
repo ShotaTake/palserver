@@ -53,6 +53,23 @@ def test_negative_idle_shutdown_raises() -> None:
         load_config(env)
 
 
+def test_public_address_settings_defaults() -> None:
+    config = load_config(BASE_ENV)
+    assert config.game_port == 8211
+    assert config.public_ip_check_interval_seconds == 300
+
+
+def test_public_ip_check_zero_disables() -> None:
+    env = {**BASE_ENV, "PUBLIC_IP_CHECK_INTERVAL_SECONDS": "0"}
+    assert load_config(env).public_ip_check_interval_seconds == 0
+
+
+def test_out_of_range_game_port_raises() -> None:
+    env = {**BASE_ENV, "GAME_PORT": "70000"}
+    with pytest.raises(ConfigError, match="GAME_PORT"):
+        load_config(env)
+
+
 def test_pal_image_dir_is_optional() -> None:
     assert load_config(BASE_ENV).pal_image_dir is None
     env = {**BASE_ENV, "PAL_IMAGE_DIR": "/var/lib/palworld-bot/pals"}

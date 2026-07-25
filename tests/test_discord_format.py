@@ -2,7 +2,12 @@ from datetime import datetime
 
 import discord
 
-from palworld_bot.discord_app import _format_presence, _format_status, _format_stop
+from palworld_bot.discord_app import (
+    _format_address,
+    _format_presence,
+    _format_status,
+    _format_stop,
+)
 from palworld_bot.services.server_manager import (
     PalworldState,
     PcState,
@@ -57,6 +62,17 @@ def test_stop_refused_still_reports_count_and_force_hint() -> None:
     text = _format_stop(StopResult(StopOutcome.REFUSED_PLAYERS_CONNECTED, players=2))
     assert "2" in text
     assert "force:True" in text
+
+
+def test_address_shows_ip_and_port() -> None:
+    text = _format_address("203.0.113.5", 8211)
+    assert "203.0.113.5:8211" in text
+
+
+def test_address_unknown_is_explained() -> None:
+    text = _format_address(None, 8211)
+    assert "8211" not in text
+    assert "掴めねえ" in text
 
 
 def test_presence_running_shows_count_and_online() -> None:
