@@ -10,6 +10,7 @@ def test_remote_commands_are_a_fixed_enum() -> None:
         "status",
         "start",
         "players",
+        "metrics",
         "restart",
         "shutdown",
         "backup",

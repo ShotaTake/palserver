@@ -111,6 +111,77 @@ async def test_status_reports_player_names() -> None:
     assert report.player_names == ("Alice", "Bob")
 
 
+FULL_METRICS = SshResult(
+    exit_code=0,
+    stdout=(
+        "fps=57\nfps_avg=58.4\nframetime=17.2\nuptime=3725\ngame_days=12\n"
+        "basecamps=3\nplayers=2\nloadavg=1.35\nmem_total_mb=16000\n"
+        "mem_used_mb=5200\ndisk_use_pct=23\ndisk_avail_gb=812\ncpu_temp=52\n"
+        "game_backups=418\n"
+    ),
+)
+
+
+async def test_load_parses_all_metrics() -> None:
+    ssh = FakeSsh({RemoteCommand.METRICS: [FULL_METRICS]})
+    manager, _ = make_manager(ssh)
+    report = await manager.load()
+    assert report is not None
+    assert report.has_game_metrics
+    assert report.fps == 57
+    assert report.fps_avg == 58.4
+    assert report.uptime_seconds == 3725
+    assert report.basecamps == 3
+    assert report.loadavg == 1.35
+    assert report.mem_used_mb == 5200
+    assert report.disk_avail_gb == 812
+    assert report.cpu_temp == 52
+    assert report.game_backups == 418
+
+
+async def test_load_without_game_metrics_when_stopped() -> None:
+    # A stopped server still reports OS figures; the game block is simply absent.
+    ssh = FakeSsh(
+        {
+            RemoteCommand.METRICS: [
+                SshResult(
+                    exit_code=0,
+                    stdout="loadavg=0.08\nmem_total_mb=16000\nmem_used_mb=900\n",
+                )
+            ]
+        }
+    )
+    manager, _ = make_manager(ssh)
+    report = await manager.load()
+    assert report is not None
+    assert not report.has_game_metrics
+    assert report.fps is None
+    assert report.loadavg == 0.08
+    assert report.mem_used_mb == 900
+
+
+async def test_load_ignores_unparsable_values() -> None:
+    ssh = FakeSsh(
+        {
+            RemoteCommand.METRICS: [
+                SshResult(exit_code=0, stdout="fps=57\nloadavg=n/a\nnonsense\ncpu_temp=\n")
+            ]
+        }
+    )
+    manager, _ = make_manager(ssh)
+    report = await manager.load()
+    assert report is not None
+    assert report.fps == 57
+    assert report.loadavg is None
+    assert report.cpu_temp is None
+
+
+async def test_load_returns_none_when_unreachable() -> None:
+    ssh = FakeSsh({RemoteCommand.METRICS: [CONNECTION_FAILED]})
+    manager, _ = make_manager(ssh)
+    assert await manager.load() is None
+
+
 async def test_restart_success() -> None:
     ssh = FakeSsh(
         {

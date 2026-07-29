@@ -60,9 +60,24 @@ _service_active() {
   systemctl is-active --quiet "$PALWORLD_SERVICE"
 }
 
+_emit_num() {
+  # _emit_num KEY VALUE — print "key=value" only when the value looks numeric.
+  case "${2:-}" in
+    "") return 0 ;;
+    *[!0-9.]* | "." ) return 0 ;;
+    *) printf '%s=%s\n' "$1" "$2" ;;
+  esac
+}
+
 _json_int() {
   # Extract an integer field from a flat JSON object on stdin.
   grep -oE "\"$1\"[[:space:]]*:[[:space:]]*-?[0-9]+" | grep -oE -- '-?[0-9]+$' | head -n1
+}
+
+_json_num() {
+  # Like _json_int but also accepts a decimal value (e.g. serverfpsaverage).
+  grep -oE "\"$1\"[[:space:]]*:[[:space:]]*-?[0-9]+(\.[0-9]+)?" \
+    | grep -oE -- '-?[0-9]+(\.[0-9]+)?$' | head -n1
 }
 
 cmd_status() {
@@ -133,6 +148,57 @@ cmd_shutdown() {
   printf 'stopped\n'
 }
 
+cmd_metrics() {
+  # Emits key=value lines describing how hard the machine is working.
+  # Game numbers need a running server; the OS ones are always available, so a
+  # stopped server still reports something useful. Every value is best effort:
+  # a line is omitted rather than guessed.
+  if _service_active; then
+    local body fps
+    body="$(_curl GET metrics 2>/dev/null || true)"
+    fps="$(printf '%s' "$body" | _json_int serverfps)"
+    if [ -n "$fps" ]; then
+      printf 'fps=%s\n' "$fps"
+      _emit_num 'fps_avg' "$(printf '%s' "$body" | _json_num serverfpsaverage)"
+      _emit_num 'frametime' "$(printf '%s' "$body" | _json_num serverframetime)"
+      _emit_num 'uptime' "$(printf '%s' "$body" | _json_int uptime)"
+      _emit_num 'game_days' "$(printf '%s' "$body" | _json_int days)"
+      _emit_num 'basecamps' "$(printf '%s' "$body" | _json_int basecampnum)"
+      _emit_num 'players' "$(printf '%s' "$body" | _json_int currentplayernum)"
+    fi
+  fi
+
+  _emit_num 'loadavg' "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)"
+
+  local mem_total mem_avail
+  mem_total="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
+  mem_avail="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
+  if [ -n "$mem_total" ] && [ -n "$mem_avail" ]; then
+    printf 'mem_total_mb=%s\n' "$mem_total"
+    printf 'mem_used_mb=%s\n' "$((mem_total - mem_avail))"
+  fi
+
+  # Disk figures come from the filesystem holding the save data.
+  local df_line
+  df_line="$(df -BG --output=pcent,avail "$PALWORLD_SAVE_DIR" 2>/dev/null | tail -n1)"
+  if [ -n "$df_line" ]; then
+    _emit_num 'disk_use_pct' "$(printf '%s' "$df_line" | grep -oE '[0-9]+%' | tr -d '%')"
+    _emit_num 'disk_avail_gb' "$(printf '%s' "$df_line" | grep -oE '[0-9]+G' | tr -d 'G')"
+  fi
+
+  local temp_raw
+  temp_raw="$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
+  if printf '%s' "$temp_raw" | grep -qE '^[0-9]+$'; then
+    printf 'cpu_temp=%s\n' "$((temp_raw / 1000))"
+  fi
+
+  # Generation count of Palworld's own save backups: this folder grows without
+  # bound, so surfacing it makes the bloat visible before the disk fills.
+  local backup_count
+  backup_count="$(find "$PALWORLD_SAVE_DIR" -mindepth 5 -maxdepth 5 -type d -path '*/backup/world/*' 2>/dev/null | wc -l)"
+  _emit_num 'game_backups' "$backup_count"
+}
+
 cmd_restart() {
   # Save + graceful stop (cmd_shutdown is a no-op when already stopped),
   # then start the service again. Uses only the sudo rules start/stop
@@ -154,6 +220,7 @@ case "${1:-}" in
   status) cmd_status ;;
   start) cmd_start ;;
   players) cmd_players ;;
+  metrics) cmd_metrics ;;
   restart) cmd_restart ;;
   shutdown) cmd_shutdown ;;
   backup) cmd_backup ;;

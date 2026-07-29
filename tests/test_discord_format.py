@@ -4,11 +4,13 @@ import discord
 
 from palworld_bot.discord_app import (
     _format_address,
+    _format_load,
     _format_presence,
     _format_status,
     _format_stop,
 )
 from palworld_bot.services.server_manager import (
+    LoadReport,
     PalworldState,
     PcState,
     StatusReport,
@@ -73,6 +75,49 @@ def test_address_unknown_is_explained() -> None:
     text = _format_address(None, 8211)
     assert "8211" not in text
     assert "掴めねえ" in text
+
+
+def test_load_shows_game_and_os_figures() -> None:
+    report = LoadReport(
+        fps=57,
+        fps_avg=58.4,
+        uptime_seconds=3725,
+        basecamps=3,
+        players=2,
+        loadavg=1.35,
+        mem_used_mb=5200,
+        mem_total_mb=16000,
+        disk_use_pct=23,
+        disk_avail_gb=812,
+        cpu_temp=52,
+        game_backups=418,
+    )
+    text = _format_load(report)
+    assert "57" in text  # fps
+    assert "58.4" in text  # average
+    assert "1時間2分" in text  # uptime formatted
+    assert "1.35" in text  # load average
+    assert "812" in text  # disk
+    assert "52" in text  # temperature
+    assert "418" in text  # backup generations
+
+
+def test_load_omits_game_block_when_stopped() -> None:
+    report = LoadReport(loadavg=0.08, mem_used_mb=900, mem_total_mb=16000)
+    text = _format_load(report)
+    assert "サーバーFPS" not in text
+    assert "stopped" in text
+    assert "0.08" in text
+
+
+def test_load_unreachable_is_explained() -> None:
+    assert "届かねえ" in _format_load(None)
+
+
+def test_load_flags_heavy_server() -> None:
+    assert "軽い" in _format_load(LoadReport(fps=58))
+    assert "やや重い" in _format_load(LoadReport(fps=35))
+    assert "重い" in _format_load(LoadReport(fps=18))
 
 
 def test_presence_running_shows_count_and_online() -> None:

@@ -19,6 +19,7 @@ from palworld_bot.config import BotConfig
 from palworld_bot.services import public_ip
 from palworld_bot.services.monitor import ServerMonitor
 from palworld_bot.services.server_manager import (
+    LoadReport,
     PalworldState,
     PcState,
     RestartOutcome,
@@ -103,6 +104,54 @@ def _format_address(address: str | None, port: int) -> str:
         f"今の店の場所はここだ。\n`{address}:{port}`\n"
         "……時々変わる。繋がらなくなったら、また聞きに来な。"
     )
+
+
+def _fps_comment(fps: int) -> str:
+    if fps >= 50:
+        return "軽い"
+    if fps >= 30:
+        return "やや重い"
+    return "重い"
+
+
+def _format_load(report: LoadReport | None) -> str:
+    if report is None:
+        return "……箱に手が届かねえ。まずは店を開けてからにしな。"
+
+    lines = ["……店の具合を見てやろう。"]
+
+    if report.has_game_metrics and report.fps is not None:
+        fps_line = f"サーバーFPS: {report.fps}（{_fps_comment(report.fps)}）"
+        if report.fps_avg is not None:
+            fps_line += f" / 平均 {report.fps_avg:.1f}"
+        lines.append(fps_line)
+        if report.players is not None:
+            lines.append(f"接続人数: {report.players}")
+        if report.basecamps is not None:
+            lines.append(f"拠点数: {report.basecamps}")
+        if report.uptime_seconds is not None:
+            hours, minutes = divmod(report.uptime_seconds // 60, 60)
+            lines.append(f"稼働時間: {hours}時間{minutes}分")
+    else:
+        lines.append("Palworld: stopped（世界の具合は分からん）")
+
+    if report.loadavg is not None:
+        lines.append(f"CPU負荷: {report.loadavg:.2f}")
+    if report.mem_used_mb is not None and report.mem_total_mb is not None:
+        used_gb = report.mem_used_mb / 1024
+        total_gb = report.mem_total_mb / 1024
+        lines.append(f"メモリ: {used_gb:.1f} / {total_gb:.1f} GB")
+    if report.disk_avail_gb is not None:
+        disk = f"ディスク空き: {report.disk_avail_gb} GB"
+        if report.disk_use_pct is not None:
+            disk += f"（使用 {report.disk_use_pct}%）"
+        lines.append(disk)
+    if report.cpu_temp is not None:
+        lines.append(f"CPU温度: {report.cpu_temp}℃")
+    if report.game_backups is not None:
+        lines.append(f"ゲーム側バックアップ: {report.game_backups} 世代")
+
+    return "\n".join(lines)
 
 
 def _format_presence(report: StatusReport) -> tuple[str, discord.Status]:
@@ -193,6 +242,20 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             await _reply(interaction, _GENERIC_ERROR_MESSAGE)
             return
         await _reply(interaction, _START_MESSAGES[outcome])
+
+    @group.command(name="load", description="サーバーPCの負荷状況を表示します")
+    async def load_command(interaction: discord.Interaction) -> None:
+        if not await _ensure_player(interaction, config):
+            return
+        if not await _acknowledge(interaction):
+            return
+        try:
+            report = await manager.load()
+        except Exception:
+            logger.exception("load command failed")
+            await _reply(interaction, _GENERIC_ERROR_MESSAGE)
+            return
+        await _reply(interaction, _format_load(report))
 
     @group.command(name="address", description="今の接続先アドレスを表示します")
     async def address_command(interaction: discord.Interaction) -> None:

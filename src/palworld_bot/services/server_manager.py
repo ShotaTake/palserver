@@ -7,7 +7,7 @@ Network side effects (SSH, WOL) are injectable for testing.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
@@ -51,6 +51,30 @@ class StartOutcome(Enum):
     BUSY = auto()
     BOOT_TIMEOUT = auto()
     START_FAILED = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class LoadReport:
+    """How hard the machine is working. Every field is None when unavailable."""
+
+    fps: int | None = None
+    fps_avg: float | None = None
+    frametime: float | None = None
+    uptime_seconds: int | None = None
+    game_days: int | None = None
+    basecamps: int | None = None
+    players: int | None = None
+    loadavg: float | None = None
+    mem_used_mb: int | None = None
+    mem_total_mb: int | None = None
+    disk_use_pct: int | None = None
+    disk_avail_gb: int | None = None
+    cpu_temp: int | None = None
+    game_backups: int | None = None
+
+    @property
+    def has_game_metrics(self) -> bool:
+        return self.fps is not None
 
 
 class RestartOutcome(Enum):
@@ -102,6 +126,33 @@ def _parse_players(stdout: str) -> tuple[int | None, int | None]:
             except ValueError:
                 max_players = None
     return players, max_players
+
+
+def _parse_key_values(stdout: str) -> dict[str, str]:
+    """Read the `key=value` lines the server-side script emits."""
+    values: dict[str, str] = {}
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key:
+            values[key] = value.strip()
+    return values
+
+
+def _as_int(values: Mapping[str, str], key: str) -> int | None:
+    try:
+        return int(values[key])
+    except (KeyError, ValueError):
+        return None
+
+
+def _as_float(values: Mapping[str, str], key: str) -> float | None:
+    try:
+        return float(values[key])
+    except (KeyError, ValueError):
+        return None
 
 
 def _parse_player_names(stdout: str) -> tuple[str, ...]:
@@ -195,6 +246,29 @@ class ServerManager:
             if verify.ok and _parse_palworld_state(verify.stdout) is PalworldState.RUNNING:
                 return StartOutcome.STARTED
             return StartOutcome.START_FAILED
+
+    async def load(self) -> LoadReport | None:
+        """Current load figures, or None when the machine cannot be reached."""
+        result = await self._ssh_runner(RemoteCommand.METRICS)
+        if not result.ok:
+            return None
+        values = _parse_key_values(result.stdout)
+        return LoadReport(
+            fps=_as_int(values, "fps"),
+            fps_avg=_as_float(values, "fps_avg"),
+            frametime=_as_float(values, "frametime"),
+            uptime_seconds=_as_int(values, "uptime"),
+            game_days=_as_int(values, "game_days"),
+            basecamps=_as_int(values, "basecamps"),
+            players=_as_int(values, "players"),
+            loadavg=_as_float(values, "loadavg"),
+            mem_used_mb=_as_int(values, "mem_used_mb"),
+            mem_total_mb=_as_int(values, "mem_total_mb"),
+            disk_use_pct=_as_int(values, "disk_use_pct"),
+            disk_avail_gb=_as_int(values, "disk_avail_gb"),
+            cpu_temp=_as_int(values, "cpu_temp"),
+            game_backups=_as_int(values, "game_backups"),
+        )
 
     async def restart(self) -> RestartOutcome:
         """Save the world and restart only the Palworld service (no poweroff)."""
