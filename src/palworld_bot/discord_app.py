@@ -106,12 +106,34 @@ def _format_address(address: str | None, port: int) -> str:
     )
 
 
+# Palworld's dedicated server targets 60 fps; the distance from that cap is
+# what tells you whether the machine is keeping up.
+_TARGET_FPS = 60
+
+
 def _fps_comment(fps: int) -> str:
     if fps >= 50:
-        return "軽い"
+        return "余裕あり"
     if fps >= 30:
         return "やや重い"
     return "重い"
+
+
+def _cpu_comment(usage_pct: float) -> str:
+    if usage_pct < 50:
+        return "余裕あり"
+    if usage_pct < 80:
+        return "やや高い"
+    return "高い"
+
+
+def _format_cpu_line(loadavg: float, cores: int | None) -> str:
+    # A bare load average means nothing without the core count: 2.0 is idle on
+    # 16 cores and saturated on 2.
+    if cores is None or cores <= 0:
+        return f"CPU負荷: {loadavg:.2f}（コア数不明のため目安なし）"
+    usage = loadavg / cores * 100
+    return f"CPU負荷: {loadavg:.2f} / {cores}コア = {usage:.0f}%（{_cpu_comment(usage)}）"
 
 
 def _format_load(report: LoadReport | None) -> str:
@@ -121,9 +143,12 @@ def _format_load(report: LoadReport | None) -> str:
     lines = ["……店の具合を見てやろう。"]
 
     if report.has_game_metrics and report.fps is not None:
-        fps_line = f"サーバーFPS: {report.fps}（{_fps_comment(report.fps)}）"
+        fps_line = (
+            f"サーバーFPS: {report.fps} / {_TARGET_FPS}"
+            f"（{_fps_comment(report.fps)}）"
+        )
         if report.fps_avg is not None:
-            fps_line += f" / 平均 {report.fps_avg:.1f}"
+            fps_line += f" 平均 {report.fps_avg:.1f}"
         lines.append(fps_line)
         if report.players is not None:
             lines.append(f"接続人数: {report.players}")
@@ -136,11 +161,12 @@ def _format_load(report: LoadReport | None) -> str:
         lines.append("Palworld: stopped（世界の具合は分からん）")
 
     if report.loadavg is not None:
-        lines.append(f"CPU負荷: {report.loadavg:.2f}")
+        lines.append(_format_cpu_line(report.loadavg, report.cpu_cores))
     if report.mem_used_mb is not None and report.mem_total_mb is not None:
         used_gb = report.mem_used_mb / 1024
         total_gb = report.mem_total_mb / 1024
-        lines.append(f"メモリ: {used_gb:.1f} / {total_gb:.1f} GB")
+        pct = report.mem_used_mb / report.mem_total_mb * 100 if report.mem_total_mb else 0
+        lines.append(f"メモリ: {used_gb:.1f} / {total_gb:.1f} GB（{pct:.0f}%）")
     if report.disk_avail_gb is not None:
         disk = f"ディスク空き: {report.disk_avail_gb} GB"
         if report.disk_use_pct is not None:

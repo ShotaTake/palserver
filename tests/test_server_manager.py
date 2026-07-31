@@ -115,7 +115,7 @@ FULL_METRICS = SshResult(
     exit_code=0,
     stdout=(
         "fps=57\nfps_avg=58.4\nframetime=17.2\nuptime=3725\ngame_days=12\n"
-        "basecamps=3\nplayers=2\nloadavg=1.35\nmem_total_mb=16000\n"
+        "basecamps=3\nplayers=2\nloadavg=1.35\ncpu_cores=8\nmem_total_mb=16000\n"
         "mem_used_mb=5200\ndisk_use_pct=23\ndisk_avail_gb=812\ncpu_temp=52\n"
         "game_backups=418\n"
     ),
@@ -133,6 +133,7 @@ async def test_load_parses_all_metrics() -> None:
     assert report.uptime_seconds == 3725
     assert report.basecamps == 3
     assert report.loadavg == 1.35
+    assert report.cpu_cores == 8
     assert report.mem_used_mb == 5200
     assert report.disk_avail_gb == 812
     assert report.cpu_temp == 52

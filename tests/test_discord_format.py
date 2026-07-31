@@ -85,6 +85,7 @@ def test_load_shows_game_and_os_figures() -> None:
         basecamps=3,
         players=2,
         loadavg=1.35,
+        cpu_cores=8,
         mem_used_mb=5200,
         mem_total_mb=16000,
         disk_use_pct=23,
@@ -93,13 +94,27 @@ def test_load_shows_game_and_os_figures() -> None:
         game_backups=418,
     )
     text = _format_load(report)
-    assert "57" in text  # fps
+    assert "57 / 60" in text  # fps against the target
     assert "58.4" in text  # average
     assert "1時間2分" in text  # uptime formatted
     assert "1.35" in text  # load average
+    assert "8コア" in text  # core count gives the load meaning
+    assert "17%" in text  # 1.35 / 8 cores
     assert "812" in text  # disk
     assert "52" in text  # temperature
     assert "418" in text  # backup generations
+
+
+def test_load_without_core_count_says_so() -> None:
+    text = _format_load(LoadReport(loadavg=1.35))
+    assert "1.35" in text
+    assert "コア数不明" in text
+
+
+def test_cpu_usage_verdicts() -> None:
+    assert "余裕あり" in _format_load(LoadReport(loadavg=1.0, cpu_cores=8))  # 12%
+    assert "やや高い" in _format_load(LoadReport(loadavg=5.0, cpu_cores=8))  # 62%
+    assert "高い" in _format_load(LoadReport(loadavg=7.5, cpu_cores=8))  # 94%
 
 
 def test_load_omits_game_block_when_stopped() -> None:
@@ -115,7 +130,7 @@ def test_load_unreachable_is_explained() -> None:
 
 
 def test_load_flags_heavy_server() -> None:
-    assert "軽い" in _format_load(LoadReport(fps=58))
+    assert "余裕あり" in _format_load(LoadReport(fps=58))
     assert "やや重い" in _format_load(LoadReport(fps=35))
     assert "重い" in _format_load(LoadReport(fps=18))
 

@@ -148,6 +148,39 @@ cmd_shutdown() {
   printf 'stopped\n'
 }
 
+_cpu_temp_millidegrees() {
+  # Prefer the real CPU sensor (coretemp on Intel, k10temp/zenpower on AMD).
+  # thermal_zone0 is only a reliable CPU reading on boards like the Pi; on a
+  # desktop it is often an ACPI zone that barely moves, so it is the fallback.
+  local hw name input label
+  for hw in /sys/class/hwmon/hwmon*; do
+    [ -r "$hw/name" ] || continue
+    name="$(cat "$hw/name" 2>/dev/null)"
+    case "$name" in
+      coretemp | k10temp | zenpower)
+        # Package/Tctl is the whole-CPU reading; prefer it over per-core ones.
+        for input in "$hw"/temp*_input; do
+          [ -r "$input" ] || continue
+          label="$(cat "${input%_input}_label" 2>/dev/null || true)"
+          case "$label" in
+            "Package id 0" | Tctl | Tdie)
+              cat "$input"
+              return 0
+              ;;
+          esac
+        done
+        for input in "$hw"/temp*_input; do
+          if [ -r "$input" ]; then
+            cat "$input"
+            return 0
+          fi
+        done
+        ;;
+    esac
+  done
+  cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true
+}
+
 cmd_metrics() {
   # Emits key=value lines describing how hard the machine is working.
   # Game numbers need a running server; the OS ones are always available, so a
@@ -186,8 +219,10 @@ cmd_metrics() {
     _emit_num 'disk_avail_gb' "$(printf '%s' "$df_line" | grep -oE '[0-9]+G' | tr -d 'G')"
   fi
 
+  _emit_num 'cpu_cores' "$(nproc 2>/dev/null)"
+
   local temp_raw
-  temp_raw="$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
+  temp_raw="$(_cpu_temp_millidegrees)"
   if printf '%s' "$temp_raw" | grep -qE '^[0-9]+$'; then
     printf 'cpu_temp=%s\n' "$((temp_raw / 1000))"
   fi

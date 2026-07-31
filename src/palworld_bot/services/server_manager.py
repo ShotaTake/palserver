@@ -65,6 +65,7 @@ class LoadReport:
     basecamps: int | None = None
     players: int | None = None
     loadavg: float | None = None
+    cpu_cores: int | None = None
     mem_used_mb: int | None = None
     mem_total_mb: int | None = None
     disk_use_pct: int | None = None
@@ -262,6 +263,7 @@ class ServerManager:
             basecamps=_as_int(values, "basecamps"),
             players=_as_int(values, "players"),
             loadavg=_as_float(values, "loadavg"),
+            cpu_cores=_as_int(values, "cpu_cores"),
             mem_used_mb=_as_int(values, "mem_used_mb"),
             mem_total_mb=_as_int(values, "mem_total_mb"),
             disk_use_pct=_as_int(values, "disk_use_pct"),
