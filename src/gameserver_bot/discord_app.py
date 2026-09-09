@@ -14,11 +14,11 @@ from typing import Any
 import discord
 from discord import app_commands
 
-from palworld_bot import auth, pals
-from palworld_bot.config import BotConfig
-from palworld_bot.services import public_ip
-from palworld_bot.services.monitor import ServerMonitor
-from palworld_bot.services.server_manager import (
+from gameserver_bot import auth, pals
+from gameserver_bot.config import BotConfig
+from gameserver_bot.services import public_ip
+from gameserver_bot.services.monitor import ServerMonitor
+from gameserver_bot.services.server_manager import (
     LoadReport,
     PalworldState,
     PcState,

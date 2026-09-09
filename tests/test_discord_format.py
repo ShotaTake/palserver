@@ -2,14 +2,14 @@ from datetime import datetime
 
 import discord
 
-from palworld_bot.discord_app import (
+from gameserver_bot.discord_app import (
     _format_address,
     _format_load,
     _format_presence,
     _format_status,
     _format_stop,
 )
-from palworld_bot.services.server_manager import (
+from gameserver_bot.services.server_manager import (
     LoadReport,
     PalworldState,
     PcState,

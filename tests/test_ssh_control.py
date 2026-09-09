@@ -1,5 +1,5 @@
-from palworld_bot.config import load_config
-from palworld_bot.services.ssh_control import RemoteCommand, SshResult, build_ssh_args
+from gameserver_bot.config import load_config
+from gameserver_bot.services.ssh_control import RemoteCommand, SshResult, build_ssh_args
 from tests.test_config import BASE_ENV
 
 CONFIG = load_config(BASE_ENV)

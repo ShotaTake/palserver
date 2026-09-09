@@ -7,9 +7,9 @@ import os
 
 from dotenv import load_dotenv
 
-from palworld_bot.config import ConfigError, load_config
-from palworld_bot.discord_app import PalworldBotClient
-from palworld_bot.services.server_manager import ServerManager
+from gameserver_bot.config import ConfigError, load_config
+from gameserver_bot.discord_app import PalworldBotClient
+from gameserver_bot.services.server_manager import ServerManager
 
 
 def main() -> None:

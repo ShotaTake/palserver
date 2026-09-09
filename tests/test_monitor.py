@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from palworld_bot.config import load_config
-from palworld_bot.services.monitor import ServerMonitor
-from palworld_bot.services.server_manager import (
+from gameserver_bot.config import load_config
+from gameserver_bot.services.monitor import ServerMonitor
+from gameserver_bot.services.server_manager import (
     PalworldState,
     PcState,
     StatusReport,

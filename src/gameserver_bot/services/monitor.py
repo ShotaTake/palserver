@@ -16,8 +16,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from palworld_bot.config import BotConfig
-from palworld_bot.services.server_manager import (
+from gameserver_bot.config import BotConfig
+from gameserver_bot.services.server_manager import (
     PalworldState,
     ServerManager,
     StatusReport,

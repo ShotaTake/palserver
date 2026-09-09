@@ -1,6 +1,6 @@
 import pytest
 
-from palworld_bot.services import public_ip
+from gameserver_bot.services import public_ip
 
 
 def test_parses_plain_ipv4() -> None:

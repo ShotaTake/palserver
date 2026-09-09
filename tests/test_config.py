@@ -1,6 +1,6 @@
 import pytest
 
-from palworld_bot.config import ConfigError, load_config
+from gameserver_bot.config import ConfigError, load_config
 
 BASE_ENV = {
     "DISCORD_BOT_TOKEN": "dummy-token",  # noqa: S106 - test fixture, not a real secret

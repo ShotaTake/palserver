@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
 
-from palworld_bot.config import BotConfig
-from palworld_bot.services import ssh_control, wol
-from palworld_bot.services.ssh_control import RemoteCommand, SshResult
+from gameserver_bot.config import BotConfig
+from gameserver_bot.services import ssh_control, wol
+from gameserver_bot.services.ssh_control import RemoteCommand, SshResult
 
 SshRunner = Callable[[RemoteCommand], Awaitable[SshResult]]
 WolSender = Callable[[], Awaitable[int]]

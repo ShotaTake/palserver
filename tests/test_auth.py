@@ -1,5 +1,5 @@
-from palworld_bot import auth
-from palworld_bot.config import load_config
+from gameserver_bot import auth
+from gameserver_bot.config import load_config
 from tests.test_config import BASE_ENV
 
 CONFIG = load_config(BASE_ENV)
