@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 
 from gameserver_bot.config import ConfigError, load_config
-from gameserver_bot.discord_app import PalworldBotClient
+from gameserver_bot.discord_app import GameServerBotClient
 from gameserver_bot.services.server_manager import ServerManager
 
 
@@ -24,7 +24,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     manager = ServerManager(config)
-    client = PalworldBotClient(config, manager)
+    client = GameServerBotClient(config, manager)
     client.run(config.discord_bot_token, log_handler=None)
 
 

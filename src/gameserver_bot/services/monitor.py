@@ -2,7 +2,7 @@
 
 Polls ServerManager.status() on a fixed interval. Two responsibilities:
 
-- Notify (via an injected callback) when Palworld transitions between
+- Notify (via an injected callback) when the game server transitions between
   running and not-running — the single source of "open/close" messages.
 - Track how long the server has been running with zero players and trigger
   the normal safe-stop flow once the idle threshold is reached.
@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 
 from gameserver_bot.config import BotConfig
 from gameserver_bot.services.server_manager import (
-    PalworldState,
+    GameState,
     ServerManager,
     StatusReport,
     StopOutcome,
@@ -31,8 +31,8 @@ Reporter = Callable[[StatusReport], Awaitable[None]]
 Sleeper = Callable[[float], Awaitable[None]]
 PublicIpProvider = Callable[[], Awaitable[str | None]]
 
-_OPENED_MESSAGE = "……灯が入った。開店だ。(Palworld: running)"
-_CLOSED_MESSAGE = "灯が落ちた。店じまいだ。(Palworld: stopped)"
+_OPENED_MESSAGE = "……灯が入った。開店だ。(サーバー: running)"
+_CLOSED_MESSAGE = "灯が落ちた。店じまいだ。(サーバー: stopped)"
 _AUTO_STOP_DONE_MESSAGE = "世界を封じ、写しを取って、灯を落とした。また声をかけな。"
 _AUTO_STOP_FAILED_MESSAGE = "……自動の店じまいをしくじった。様子を見てくれ。"
 
@@ -80,7 +80,7 @@ class ServerMonitor:
         # Refresh the address first so an "opened" notice can carry it.
         await self._handle_public_ip()
         report = await self._manager.status()
-        running = report.palworld is PalworldState.RUNNING
+        running = report.game is GameState.RUNNING
         await self._handle_transition(running)
         await self._handle_players(report, running)
         await self._handle_idle(report, running)

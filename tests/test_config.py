@@ -55,7 +55,7 @@ def test_negative_idle_shutdown_raises() -> None:
 
 def test_public_address_settings_defaults() -> None:
     config = load_config(BASE_ENV)
-    assert config.game_port == 8211
+    assert config.game_port == 2456
     assert config.public_ip_check_interval_seconds == 300
 
 

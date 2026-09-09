@@ -1,0 +1,12 @@
+# TEMPLATE ONLY. Validate with `visudo -cf FILE` before installation.
+# Prefer putting privileged implementation in root-owned scripts and granting
+# only those exact scripts. Never grant ALL, shells, editors, or package managers.
+#
+# `systemctl is-active` is deliberately absent: querying state needs no
+# privileges. Only starting, stopping, and powering off do.
+
+Cmnd_Alias GAMESERVER_START = /usr/bin/systemctl start valheim-server.service
+Cmnd_Alias GAMESERVER_STOP = /usr/bin/systemctl stop valheim-server.service
+Cmnd_Alias GAMESERVER_POWER = /usr/local/sbin/gameserver-safe-poweroff
+
+palbotctl ALL=(root) NOPASSWD: GAMESERVER_START, GAMESERVER_STOP, GAMESERVER_POWER

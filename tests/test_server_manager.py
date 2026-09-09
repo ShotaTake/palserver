@@ -1,6 +1,6 @@
 from gameserver_bot.config import load_config
 from gameserver_bot.services.server_manager import (
-    PalworldState,
+    GameState,
     PcState,
     RestartOutcome,
     ServerManager,
@@ -12,8 +12,8 @@ from tests.test_config import BASE_ENV
 
 CONFIG = load_config(BASE_ENV)
 
-OK_RUNNING = SshResult(exit_code=0, stdout="palworld=running\n")
-OK_STOPPED = SshResult(exit_code=0, stdout="palworld=stopped\n")
+OK_RUNNING = SshResult(exit_code=0, stdout="valheim=running\n")
+OK_STOPPED = SshResult(exit_code=0, stdout="valheim=stopped\n")
 CONNECTION_FAILED = SshResult(exit_code=255, stdout="")
 OK_EMPTY = SshResult(exit_code=0, stdout="")
 FAILED = SshResult(exit_code=1, stdout="")
@@ -53,7 +53,7 @@ async def test_status_offline_when_connection_fails() -> None:
     manager, _ = make_manager(ssh)
     report = await manager.status()
     assert report.pc is PcState.OFFLINE
-    assert report.palworld is PalworldState.UNKNOWN
+    assert report.game is GameState.UNKNOWN
     assert report.players is None
 
 
@@ -67,7 +67,7 @@ async def test_status_running_reports_players() -> None:
     manager, _ = make_manager(ssh)
     report = await manager.status()
     assert report.pc is PcState.ONLINE
-    assert report.palworld is PalworldState.RUNNING
+    assert report.game is GameState.RUNNING
     assert report.players == 2
     assert report.max_players == 8
 
@@ -89,7 +89,7 @@ async def test_status_stopped_reports_zero_players() -> None:
     ssh = FakeSsh({RemoteCommand.STATUS: [OK_STOPPED]})
     manager, _ = make_manager(ssh)
     report = await manager.status()
-    assert report.palworld is PalworldState.STOPPED
+    assert report.game is GameState.STOPPED
     assert report.players == 0
 
 
@@ -113,12 +113,7 @@ async def test_status_reports_player_names() -> None:
 
 FULL_METRICS = SshResult(
     exit_code=0,
-    stdout=(
-        "fps=57\nfps_avg=58.4\nframetime=17.2\nuptime=3725\ngame_days=12\n"
-        "basecamps=3\nplayers=2\nloadavg=1.35\ncpu_cores=8\nmem_total_mb=16000\n"
-        "mem_used_mb=5200\ndisk_use_pct=23\ndisk_avail_gb=812\ncpu_temp=52\n"
-        "game_backups=418\n"
-    ),
+    stdout="players=2\nmax_players=10\nplayer=Odin\nuptime=3725\nloadavg=1.35\ncpu_cores=8\nmem_total_mb=16000\nmem_used_mb=5200\ndisk_use_pct=23\ndisk_avail_gb=812\ncpu_temp=52\n",
 )
 
 
@@ -128,16 +123,14 @@ async def test_load_parses_all_metrics() -> None:
     report = await manager.load()
     assert report is not None
     assert report.has_game_metrics
-    assert report.fps == 57
-    assert report.fps_avg == 58.4
+    assert report.players == 2
+    assert report.max_players == 10
     assert report.uptime_seconds == 3725
-    assert report.basecamps == 3
     assert report.loadavg == 1.35
     assert report.cpu_cores == 8
     assert report.mem_used_mb == 5200
     assert report.disk_avail_gb == 812
     assert report.cpu_temp == 52
-    assert report.game_backups == 418
 
 
 async def test_load_without_game_metrics_when_stopped() -> None:
@@ -156,7 +149,7 @@ async def test_load_without_game_metrics_when_stopped() -> None:
     report = await manager.load()
     assert report is not None
     assert not report.has_game_metrics
-    assert report.fps is None
+    assert report.players is None
     assert report.loadavg == 0.08
     assert report.mem_used_mb == 900
 
@@ -165,14 +158,14 @@ async def test_load_ignores_unparsable_values() -> None:
     ssh = FakeSsh(
         {
             RemoteCommand.METRICS: [
-                SshResult(exit_code=0, stdout="fps=57\nloadavg=n/a\nnonsense\ncpu_temp=\n")
+                SshResult(exit_code=0, stdout="players=2\nloadavg=n/a\nnonsense\ncpu_temp=\n")
             ]
         }
     )
     manager, _ = make_manager(ssh)
     report = await manager.load()
     assert report is not None
-    assert report.fps == 57
+    assert report.players == 2
     assert report.loadavg is None
     assert report.cpu_temp is None
 
