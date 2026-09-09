@@ -16,7 +16,13 @@
   - https://docs.anthropic.com/en/docs/claude-code/settings
 - Discord.py documentation
   - https://discordpy.readthedocs.io/
-- Tailscale SSH
-  - https://tailscale.com/docs/features/tailscale-ssh
-- Palworld REST API
-  - https://docs.palworldgame.com/category/rest-api/
+- Valheim Dedicated Server (Steam)
+  - https://store.steampowered.com/app/896660/Valheim_Dedicated_Server/
+- Valve: SteamCMD
+  - https://developer.valvesoftware.com/wiki/SteamCMD
+- Valve: Server queries (A2S_INFO / A2S_PLAYER)
+  - https://developer.valvesoftware.com/wiki/Server_queries
+- systemd.kill (KillSignal)
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html
+- sshd: AUTHORIZED_KEYS FILE FORMAT (restrict, command)
+  - https://man.openbsd.org/sshd#AUTHORIZED_KEYS_FILE_FORMAT

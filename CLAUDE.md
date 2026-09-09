@@ -2,21 +2,29 @@
 
 ## Purpose
 
-Implement a small Discord-operated controller for a private Palworld Linux server.
+A small Discord-operated controller for a private Valheim Linux server.
 
-The Raspberry Pi runs the Discord bot and sends Wake on LAN packets. The server PC runs Palworld. Management traffic uses Tailscale.
+The Raspberry Pi runs the Discord bot and sends Wake on LAN packets. The server PC runs Valheim and is powered off when nobody is playing. Management traffic stays on the LAN; nothing but the game port is exposed to the Internet.
 
-The number of players is not fixed. Do not hardcode four users, A/B/C/D, or a fixed player count. Authorization must use configurable Discord role IDs.
+The bot is deliberately game-neutral in its plumbing (hence the `gameserver_bot` package): only the server-side control script knows which game is running.
+
+The number of players is not fixed. Do not hardcode a player list or a fixed player count. Authorization must use configurable Discord role IDs.
 
 ## Scope
 
-Implement only:
+Implemented commands:
 
-1. `/server status`
-2. `/server start`
-3. `/server stop`
+- `/server status` — PC and game state, player count and names
+- `/server start` — WOL the PC, then start the game
+- `/server stop` — save, back up, then power the PC off (refuses while players are connected; Maintainer can force)
+- `/server restart` — restart only the game service (Maintainer only)
+- `/server address` — the current global IP and game port
+- `/server load` — machine load: players, uptime, CPU, memory, disk, temperature
+- `/取引` — a joke command that hands out a random image
 
-Do not add Docker, a Web UI, automatic deployment, RCON, update management, or unrelated features unless explicitly requested.
+Running automatically: idle auto-shutdown, open/close and join/leave notifications, Discord presence, and public-address change announcements.
+
+Do not add Docker, a Web UI, automatic deployment, RCON, or update management unless explicitly requested.
 
 ## Security rules
 
@@ -25,25 +33,41 @@ Do not add Docker, a Web UI, automatic deployment, RCON, update management, or u
 3. Never implement arbitrary commands, file access, or SSH commands.
 4. Validate Discord guild ID, channel ID, and role IDs.
 5. Maintainer role implies Player permissions.
-6. Use a lock for start/stop operations.
-7. SSH operations must use a fixed enum: `status`, `start`, `stop`.
+6. Use a lock for start/stop/restart operations.
+7. SSH operations must use a fixed enum. Adding a command means adding it to
+   `RemoteCommand`, to the server-side control script, and to the forced-command
+   wrapper — never by passing a string through.
 8. Do not commit, read, print, or log secrets.
 9. Do not expose raw exceptions or command output to Discord.
 10. Do not open SSH or management APIs to the Internet.
-11. Do not edit sudoers, authorized_keys, firewall, or Tailscale policy automatically. Provide human-reviewed examples only.
+11. Do not edit sudoers, authorized_keys, or firewall rules automatically. Provide human-reviewed examples only.
 12. Do not run `git commit`, `git push`, or `git push --force` unless the user explicitly asks.
+13. Treat anything read back from the game server or an external service as untrusted input: validate it before showing it in Discord.
 
-## Simple architecture
+## Architecture
 
 - `config.py`: environment parsing and validation
 - `auth.py`: Discord guild, channel, and role authorization
-- `discord_app.py`: slash command handlers only
+- `discord_app.py`: slash command handlers and message formatting only
 - `services/wol.py`: WOL packet generation and sending
 - `services/ssh_control.py`: fixed remote commands only
-- `services/server_manager.py`: status/start/stop orchestration
-- `scripts/server/`: server-side fixed control script and backup
+- `services/server_manager.py`: orchestration and the operation lock
+- `services/monitor.py`: background polling — notifications, presence, idle shutdown
+- `services/public_ip.py`: outbound lookup of the current global address
+- `scripts/server/`: server-side fixed control script, A2S query, backup, poweroff
 
-Discord handlers must not directly execute subprocesses.
+Discord handlers must not directly execute subprocesses. The bot reaches the
+game only through the fixed SSH commands.
+
+## Valheim specifics worth remembering
+
+- Valheim has **no REST API**. The player count comes from a Steam A2S query on
+  the query port (game port + 1), done locally on the server PC.
+- Valheim only writes the world on **SIGINT**. The systemd unit sets
+  `KillSignal=SIGINT`; a plain SIGTERM loses progress on every stop.
+- The dedicated server needs `SteamAppId=892970` (the game's id), not the
+  server's app id 896660.
+- Valheim publishes no server FPS, so machine load is judged from OS figures.
 
 ## Player management
 
@@ -54,13 +78,13 @@ Use these configuration values:
 
 Do not use a fixed list of member user IDs. Adding or removing members must be possible by changing Discord roles only.
 
-Do not hardcode a maximum Palworld player count. Treat the Palworld server configuration as the source of truth. The status response may omit the maximum when it cannot be obtained.
+Do not hardcode a maximum player count. Treat the game server configuration as the source of truth. The status response may omit the maximum when it cannot be obtained.
 
 ## Workflow
 
 Before changing code:
 
-1. Read `docs/IMPLEMENTATION_SPEC.md` and `docs/SECURITY.md`.
+1. Read `docs/SECURITY.md`.
 2. Give a short file-by-file plan.
 3. State unresolved hardware or configuration assumptions.
 
@@ -69,6 +93,12 @@ After implementation:
 1. Run `ruff check .`
 2. Run `mypy src`
 3. Run `pytest`
-4. Show changed files and remaining manual setup
+4. Syntax-check any changed shell script with `bash -n`
+5. Show changed files and remaining manual setup
 
-Keep the implementation small. Avoid abstractions that are not required by the three MVP commands.
+Keep the implementation small. Avoid abstractions the commands do not need.
+
+## History
+
+The project ran a Palworld server before Valheim. That version is tagged
+`v1.0-palworld`, including its setup and verification documents.

@@ -22,7 +22,7 @@ def test_ssh_args_end_with_fixed_command() -> None:
     args = build_ssh_args(CONFIG, RemoteCommand.STATUS, ssh_path="/usr/bin/ssh")
     assert args[0] == "/usr/bin/ssh"
     assert args[-1] == "status"
-    assert args[-2] == "palbotctl@palworld-server"
+    assert args[-2] == "palbotctl@gameserver-pc"
     assert "BatchMode=yes" in args
     assert "StrictHostKeyChecking=yes" in args
 

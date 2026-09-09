@@ -1,30 +1,24 @@
 # Valheim サーバー構築手順（サーバー PC）
 
-Palworld と同じサーバー PC に Valheim 専用サーバーを追加する手順です。**Raspberry Pi では動きません**（Valheim も x86-64 専用）。Pi は今までどおり Discord Bot の常駐ホストのままです。
+サーバー PC に Valheim 専用サーバーを構築する手順です。**Raspberry Pi では動きません**（Valheim は x86-64 専用）。Pi は Discord Bot の常駐ホストです。
 
-現時点では **Bot には統合していません**。まず手動で確実に動かし、そのあと Bot に組み込みます。
+まず手動で確実に動かしてから、Bot 側（[SETUP_PRODUCTION.md](SETUP_PRODUCTION.md)）を繋ぎます。
 
-## 運用方針: 片方ずつ
+## 旧 Palworld サーバーがある場合
 
-Palworld と Valheim は**同時に起動しません**。リソースを食い合わないよう、遊ぶ方だけを起動します。
+同じ PC で Palworld を動かしていたなら、先に止めて自動起動を切っておきます。リソースの食い合いと、ポートの取り合いを防ぐためです。
 
 ```bash
-# Valheim で遊ぶとき
-sudo systemctl stop palworld-server.service
-sudo systemctl start valheim-server.service
-
-# Palworld で遊ぶとき
-sudo systemctl stop valheim-server.service
-sudo systemctl start palworld-server.service
+sudo systemctl disable --now palworld-server.service
 ```
 
-> どちらも「誰も接続していないこと」を確認してから止めてください。
+> セーブデータは消さずに残しておけば、あとで戻すこともできます。
 
 ---
 
 ## 1. ユーザーとディレクトリ
 
-Palworld と分離しておくと、権限事故が起きません。
+ゲーム専用のユーザーを作り、他と分離しておくと権限事故が起きません。
 
 ```bash
 sudo useradd -r -m -s /bin/bash valheim
@@ -34,7 +28,7 @@ sudo chown valheim: /opt/valheim-server
 
 ## 2. SteamCMD で導入
 
-SteamCMD は Palworld のときに導入済みです。Valheim 専用サーバーの App ID は **896660**。
+SteamCMD が未導入なら `sudo apt install steamcmd` で入れます。Valheim 専用サーバーの App ID は **896660**。
 
 ```bash
 sudo -u valheim /usr/games/steamcmd +force_install_dir /opt/valheim-server \
@@ -42,11 +36,11 @@ sudo -u valheim /usr/games/steamcmd +force_install_dir /opt/valheim-server \
   +app_update 896660 validate +quit
 ```
 
-`+app_info_update 1 +app_info_print 896660` を付けているのは、Palworld の更新でハマった「古いマニフェストをキャッシュしたまま `Access Denied` になる」問題を最初から避けるためです。
+`+app_info_update 1 +app_info_print 896660` を付けているのは、「古いマニフェストをキャッシュしたまま `Access Denied` になる」問題を避けるためです（過去に更新で実際にハマった箇所）。
 
 最後に `Success! App '896660' fully installed.` が出れば成功です。
 
-Steam SDK も配置しておきます（Palworld と同じ対策）:
+Steam SDK も配置しておきます:
 
 ```bash
 sudo -u valheim bash -c '
@@ -121,7 +115,7 @@ WantedBy=multi-user.target
 
 **2つの落とし穴**:
 
-- **`KillSignal=SIGINT`**: これが無いと `systemctl stop` のたびにワールドが巻き戻ります。Palworld で REST の `shutdown` を使っているのと同じ役割です
+- **`KillSignal=SIGINT`**: これが無いと `systemctl stop` のたびにワールドが巻き戻ります。Valheim には保存用の API が無いため、Bot の `/server stop` もこの仕組みに乗って保存します
 - **`SteamAppId=892970`**: サーバーの App ID（896660）ではなく**ゲーム本体の ID** を指定します。Valheim 付属の `start_server.sh` もこの値を使っています
 
 反映:
@@ -148,7 +142,7 @@ sudo ufw status | grep 245
 sudo ufw allow 2456:2457/udp
 ```
 
-**ルーターのポート開放** — Palworld 用（UDP 35520）とは別に、Valheim 用の転送を追加します:
+**ルーターのポート開放** — Valheim 用の転送を追加します（旧 Palworld 用の転送が残っていれば削除してください）:
 
 | 項目 | 値 |
 |---|---|
@@ -209,11 +203,11 @@ sudo tar -czf ~/valheim-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
   -C /home/valheim/.config/unity3d/IronGate/Valheim worlds_local
 ```
 
-> 現在の `palworld-backup` は Palworld 専用です。Valheim の自動バックアップは Bot 統合のときに合わせて用意します。
+Bot から `/server stop` した場合は、`scripts/server/gameserver-backup` が停止後に同じ内容を自動で固めます（設置は [SETUP_PRODUCTION.md](SETUP_PRODUCTION.md) の A-5）。手動バックアップが要るのは Bot を使わずに止めたときだけです。
 
 ## 9. アップデート手順
 
-Palworld と同じ形です。**必ず停止してから**行ってください。
+**必ず停止してから**行ってください。
 
 ```bash
 sudo systemctl stop valheim-server.service
@@ -230,11 +224,11 @@ sudo systemctl start valheim-server.service
 - [ ] LAN 内のクライアントから参加できる
 - [ ] 外（スマホのモバイル通信や友達）から参加できる
 - [ ] `sudo systemctl stop valheim-server.service` で停止 → **再起動してワールドの進行が保持されている**（SIGINT 設定の確認。ここが一番重要）
-- [ ] Palworld を起動する前に Valheim を停止できる（片方ずつ運用）
+- [ ] `sudo -u <制御ユーザー> /usr/local/sbin/valheim-control status` が `valheim=running` を返す（Bot 連携の前提）
 
 ## 補足: リソースの確認
 
-Palworld と比べた重さは `/server load` で測れます。Valheim 稼働中に Discord で `/server load` を実行し、CPU 使用率とメモリを確認しておくと、将来「同時稼働できるか」を判断する材料になります。
+Valheim 稼働中に Discord で `/server load` を実行すると、CPU 使用率・メモリ・温度が確認できます。人数が増えたときの余力を見るのに使ってください。
 
 ## 補足: 正式リリース直後の注意
 
