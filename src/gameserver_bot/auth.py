@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from palworld_bot.config import BotConfig
+from gameserver_bot.config import BotConfig
 
 
 def is_allowed_context(config: BotConfig, guild_id: int | None, channel_id: int | None) -> bool:

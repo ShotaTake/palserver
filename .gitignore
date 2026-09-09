@@ -1,7 +1,6 @@
 # Secrets and local configuration
 .env
 .env.*
-!.env.example
 config/*.env
 !config/*.env.example
 secrets/
@@ -18,8 +17,8 @@ logs/
 *.sock
 
 # Pal trade images (copyrighted game assets — keep local, per-machine)
-src/palworld_bot/assets/pals/*
-!src/palworld_bot/assets/pals/.gitkeep
+src/gameserver_bot/assets/pals/*
+!src/gameserver_bot/assets/pals/.gitkeep
 
 # Python
 __pycache__/

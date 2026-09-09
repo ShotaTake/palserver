@@ -1,7 +1,7 @@
 import random
 from pathlib import Path
 
-from palworld_bot import pals
+from gameserver_bot import pals
 
 
 def _make_files(directory: Path, names: list[str]) -> None:

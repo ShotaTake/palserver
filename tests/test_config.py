@@ -1,6 +1,6 @@
 import pytest
 
-from palworld_bot.config import ConfigError, load_config
+from gameserver_bot.config import ConfigError, load_config
 
 BASE_ENV = {
     "DISCORD_BOT_TOKEN": "dummy-token",  # noqa: S106 - test fixture, not a real secret
@@ -11,7 +11,7 @@ BASE_ENV = {
     "DISCORD_MAINTAINER_ROLE_ID": "500",
     "SERVER_MAC_ADDRESS": "AA:BB:CC:DD:EE:FF",
     "SERVER_LAN_BROADCAST": "192.168.1.255",
-    "SERVER_TAILSCALE_HOST": "palworld-server",
+    "SERVER_TAILSCALE_HOST": "gameserver-pc",
     "SERVER_SSH_USER": "palbotctl",
     "SERVER_SSH_KEY_PATH": "/keys/id_ed25519",
     "SERVER_SSH_KNOWN_HOSTS_PATH": "/keys/known_hosts",
@@ -25,7 +25,7 @@ def test_load_config_success() -> None:
     assert config.discord_audit_channel_id == 300
     assert config.discord_player_role_id == 400
     assert config.discord_maintainer_role_id == 500
-    assert config.server_ssh_host == "palworld-server"
+    assert config.server_ssh_host == "gameserver-pc"
     assert config.wol_repeat_count == 3
     assert config.server_boot_timeout_seconds == 240
     assert config.log_level == "INFO"
@@ -55,7 +55,7 @@ def test_negative_idle_shutdown_raises() -> None:
 
 def test_public_address_settings_defaults() -> None:
     config = load_config(BASE_ENV)
-    assert config.game_port == 8211
+    assert config.game_port == 2456
     assert config.public_ip_check_interval_seconds == 300
 
 
@@ -72,8 +72,8 @@ def test_out_of_range_game_port_raises() -> None:
 
 def test_pal_image_dir_is_optional() -> None:
     assert load_config(BASE_ENV).pal_image_dir is None
-    env = {**BASE_ENV, "PAL_IMAGE_DIR": "/var/lib/palworld-bot/pals"}
-    assert load_config(env).pal_image_dir == "/var/lib/palworld-bot/pals"
+    env = {**BASE_ENV, "PAL_IMAGE_DIR": "/var/lib/gameserver-bot/pals"}
+    assert load_config(env).pal_image_dir == "/var/lib/gameserver-bot/pals"
 
 
 def test_missing_token_raises() -> None:

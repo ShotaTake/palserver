@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from palworld_bot.config import load_config
-from palworld_bot.services.monitor import ServerMonitor
-from palworld_bot.services.server_manager import (
-    PalworldState,
+from gameserver_bot.config import load_config
+from gameserver_bot.services.monitor import ServerMonitor
+from gameserver_bot.services.server_manager import (
+    GameState,
     PcState,
     StatusReport,
     StopOutcome,
@@ -20,13 +20,13 @@ CONFIG = load_config(
 def report(
     *, running: bool, players: int | None, names: tuple[str, ...] = ()
 ) -> StatusReport:
-    state = PalworldState.RUNNING if running else PalworldState.STOPPED
+    state = GameState.RUNNING if running else GameState.STOPPED
     pc = PcState.ONLINE if running or players is not None else PcState.OFFLINE
     return StatusReport(pc, state, players, None, datetime(2026, 7, 25, 12, 0, 0), names)
 
 
 OFFLINE = StatusReport(
-    PcState.OFFLINE, PalworldState.UNKNOWN, None, None, datetime(2026, 7, 25, 12, 0, 0)
+    PcState.OFFLINE, GameState.UNKNOWN, None, None, datetime(2026, 7, 25, 12, 0, 0)
 )
 
 
@@ -223,8 +223,8 @@ async def test_public_ip_change_is_announced() -> None:
     await monitor.tick()  # baseline, no announcement
     assert not any("203.0.113.5" in m for m in sent)
     await monitor.tick()
-    assert any("198.51.100.7:8211" in m for m in sent)
-    assert monitor.address_line() == "198.51.100.7:8211"
+    assert any("198.51.100.7:2456" in m for m in sent)
+    assert monitor.address_line() == "198.51.100.7:2456"
 
 
 async def test_failed_lookup_keeps_last_address_and_stays_quiet() -> None:
@@ -235,7 +235,7 @@ async def test_failed_lookup_keeps_last_address_and_stays_quiet() -> None:
     await monitor.tick()  # lookup fails
     await monitor.tick()
     assert sent == []
-    assert monitor.address_line() == "203.0.113.5:8211"
+    assert monitor.address_line() == "203.0.113.5:2456"
 
 
 async def test_public_ip_respects_check_interval() -> None:
@@ -272,7 +272,7 @@ async def test_opened_notice_includes_address_when_known() -> None:
     await monitor.tick()  # baseline (stopped)
     await monitor.tick()  # opens
     opened = [m for m in sent if "開店" in m]
-    assert opened and "203.0.113.5:8211" in opened[0]
+    assert opened and "203.0.113.5:2456" in opened[0]
 
 
 async def test_no_provider_means_no_address() -> None:

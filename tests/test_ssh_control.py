@@ -1,5 +1,5 @@
-from palworld_bot.config import load_config
-from palworld_bot.services.ssh_control import RemoteCommand, SshResult, build_ssh_args
+from gameserver_bot.config import load_config
+from gameserver_bot.services.ssh_control import RemoteCommand, SshResult, build_ssh_args
 from tests.test_config import BASE_ENV
 
 CONFIG = load_config(BASE_ENV)
@@ -22,7 +22,7 @@ def test_ssh_args_end_with_fixed_command() -> None:
     args = build_ssh_args(CONFIG, RemoteCommand.STATUS, ssh_path="/usr/bin/ssh")
     assert args[0] == "/usr/bin/ssh"
     assert args[-1] == "status"
-    assert args[-2] == "palbotctl@palworld-server"
+    assert args[-2] == "palbotctl@gameserver-pc"
     assert "BatchMode=yes" in args
     assert "StrictHostKeyChecking=yes" in args
 

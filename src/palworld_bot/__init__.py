@@ -1,1 +1,0 @@
-"""Palworld server operations bot."""

@@ -12,7 +12,7 @@ import shutil
 from dataclasses import dataclass
 from enum import Enum
 
-from palworld_bot.config import BotConfig
+from gameserver_bot.config import BotConfig
 
 logger = logging.getLogger(__name__)
 

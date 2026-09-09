@@ -1,4 +1,4 @@
-"""Status/start/stop orchestration.
+"""Game server orchestration: status, start, stop, restart, load.
 
 Holds the single asyncio.Lock that prevents concurrent start/stop operations.
 Network side effects (SSH, WOL) are injectable for testing.
@@ -7,14 +7,15 @@ Network side effects (SSH, WOL) are injectable for testing.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
 
-from palworld_bot.config import BotConfig
-from palworld_bot.services import ssh_control, wol
-from palworld_bot.services.ssh_control import RemoteCommand, SshResult
+from gameserver_bot.config import BotConfig
+from gameserver_bot.services import ssh_control, wol
+from gameserver_bot.services.ssh_control import RemoteCommand, SshResult
 
 SshRunner = Callable[[RemoteCommand], Awaitable[SshResult]]
 WolSender = Callable[[], Awaitable[int]]
@@ -29,7 +30,7 @@ class PcState(Enum):
     UNKNOWN = "unknown"
 
 
-class PalworldState(Enum):
+class GameState(Enum):
     STOPPED = "stopped"
     RUNNING = "running"
     UNKNOWN = "unknown"
@@ -38,7 +39,7 @@ class PalworldState(Enum):
 @dataclass(frozen=True, slots=True)
 class StatusReport:
     pc: PcState
-    palworld: PalworldState
+    game: GameState
     players: int | None
     max_players: int | None
     checked_at: datetime
@@ -57,13 +58,9 @@ class StartOutcome(Enum):
 class LoadReport:
     """How hard the machine is working. Every field is None when unavailable."""
 
-    fps: int | None = None
-    fps_avg: float | None = None
-    frametime: float | None = None
-    uptime_seconds: int | None = None
-    game_days: int | None = None
-    basecamps: int | None = None
     players: int | None = None
+    max_players: int | None = None
+    uptime_seconds: int | None = None
     loadavg: float | None = None
     cpu_cores: int | None = None
     mem_used_mb: int | None = None
@@ -71,11 +68,11 @@ class LoadReport:
     disk_use_pct: int | None = None
     disk_avail_gb: int | None = None
     cpu_temp: int | None = None
-    game_backups: int | None = None
 
     @property
     def has_game_metrics(self) -> bool:
-        return self.fps is not None
+        """True when the game server answered; a stopped one reports OS data only."""
+        return self.players is not None
 
 
 class RestartOutcome(Enum):
@@ -101,14 +98,17 @@ class StopResult:
     players: int | None = None
 
 
-def _parse_palworld_state(stdout: str) -> PalworldState:
+# The control script names the line after its game ("valheim=running"), so the
+# bot accepts any such key and only cares about the state itself.
+_STATE_LINE = re.compile(r"^[a-z0-9_]+=(running|stopped)$")
+
+
+def _parse_game_state(stdout: str) -> GameState:
     for raw_line in stdout.splitlines():
-        line = raw_line.strip()
-        if line == "palworld=running":
-            return PalworldState.RUNNING
-        if line == "palworld=stopped":
-            return PalworldState.STOPPED
-    return PalworldState.UNKNOWN
+        match = _STATE_LINE.match(raw_line.strip())
+        if match:
+            return GameState.RUNNING if match.group(1) == "running" else GameState.STOPPED
+    return GameState.UNKNOWN
 
 
 def _parse_players(stdout: str) -> tuple[int | None, int | None]:
@@ -211,22 +211,22 @@ class ServerManager:
         checked_at = self._now()
         result = await self._ssh_runner(RemoteCommand.STATUS)
         if result.connection_failed:
-            return StatusReport(PcState.OFFLINE, PalworldState.UNKNOWN, None, None, checked_at)
+            return StatusReport(PcState.OFFLINE, GameState.UNKNOWN, None, None, checked_at)
         if not result.ok:
-            return StatusReport(PcState.ONLINE, PalworldState.UNKNOWN, None, None, checked_at)
-        palworld = _parse_palworld_state(result.stdout)
+            return StatusReport(PcState.ONLINE, GameState.UNKNOWN, None, None, checked_at)
+        game = _parse_game_state(result.stdout)
         players: int | None = None
         max_players: int | None = None
         player_names: tuple[str, ...] = ()
-        if palworld is PalworldState.RUNNING:
+        if game is GameState.RUNNING:
             players_result = await self._ssh_runner(RemoteCommand.PLAYERS)
             if players_result.ok:
                 players, max_players = _parse_players(players_result.stdout)
                 player_names = _parse_player_names(players_result.stdout)
-        elif palworld is PalworldState.STOPPED:
+        elif game is GameState.STOPPED:
             players = 0
         return StatusReport(
-            PcState.ONLINE, palworld, players, max_players, checked_at, player_names
+            PcState.ONLINE, game, players, max_players, checked_at, player_names
         )
 
     async def start(self) -> StartOutcome:
@@ -234,7 +234,7 @@ class ServerManager:
             return StartOutcome.BUSY
         async with self._lock:
             probe = await self._ssh_runner(RemoteCommand.STATUS)
-            if probe.ok and _parse_palworld_state(probe.stdout) is PalworldState.RUNNING:
+            if probe.ok and _parse_game_state(probe.stdout) is GameState.RUNNING:
                 return StartOutcome.ALREADY_RUNNING
             if probe.connection_failed:
                 await self._wol_sender()
@@ -244,7 +244,7 @@ class ServerManager:
             if not start_result.ok:
                 return StartOutcome.START_FAILED
             verify = await self._ssh_runner(RemoteCommand.STATUS)
-            if verify.ok and _parse_palworld_state(verify.stdout) is PalworldState.RUNNING:
+            if verify.ok and _parse_game_state(verify.stdout) is GameState.RUNNING:
                 return StartOutcome.STARTED
             return StartOutcome.START_FAILED
 
@@ -255,13 +255,9 @@ class ServerManager:
             return None
         values = _parse_key_values(result.stdout)
         return LoadReport(
-            fps=_as_int(values, "fps"),
-            fps_avg=_as_float(values, "fps_avg"),
-            frametime=_as_float(values, "frametime"),
-            uptime_seconds=_as_int(values, "uptime"),
-            game_days=_as_int(values, "game_days"),
-            basecamps=_as_int(values, "basecamps"),
             players=_as_int(values, "players"),
+            max_players=_as_int(values, "max_players"),
+            uptime_seconds=_as_int(values, "uptime"),
             loadavg=_as_float(values, "loadavg"),
             cpu_cores=_as_int(values, "cpu_cores"),
             mem_used_mb=_as_int(values, "mem_used_mb"),
@@ -269,11 +265,10 @@ class ServerManager:
             disk_use_pct=_as_int(values, "disk_use_pct"),
             disk_avail_gb=_as_int(values, "disk_avail_gb"),
             cpu_temp=_as_int(values, "cpu_temp"),
-            game_backups=_as_int(values, "game_backups"),
         )
 
     async def restart(self) -> RestartOutcome:
-        """Save the world and restart only the Palworld service (no poweroff)."""
+        """Save the world and restart only the game service (no poweroff)."""
         if self._lock.locked():
             return RestartOutcome.BUSY
         async with self._lock:
@@ -284,7 +279,7 @@ class ServerManager:
             if not result.ok:
                 return RestartOutcome.RESTART_FAILED
             verify = await self._ssh_runner(RemoteCommand.STATUS)
-            if verify.ok and _parse_palworld_state(verify.stdout) is PalworldState.RUNNING:
+            if verify.ok and _parse_game_state(verify.stdout) is GameState.RUNNING:
                 return RestartOutcome.RESTARTED
             return RestartOutcome.RESTART_FAILED
 

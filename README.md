@@ -1,6 +1,6 @@
-# Palworld Server Operations
+# Game Server Operations
 
-Discord から Palworld 専用サーバーを操作する小規模プロジェクトです。使わないときはサーバー PC の電源を落としておき、遊ぶときだけ Discord から Wake on LAN で起こします。
+Discord から Valheim 専用サーバーを操作する小規模プロジェクトです。使わないときはサーバー PC の電源を落としておき、遊ぶときだけ Discord から Wake on LAN で起こします。
 
 ## できること
 
@@ -8,14 +8,15 @@ Discord から Palworld 専用サーバーを操作する小規模プロジェ�
 
 | コマンド | 権限 | 内容 |
 |---|---|---|
-| `/server status` | Player | サーバー PC と Palworld の状態、接続人数とプレイヤー名 |
-| `/server start` | Player | WOL で PC を起動し、Palworld を立ち上げる |
+| `/server status` | Player | サーバー PC とゲームの状態、接続人数とプレイヤー名 |
+| `/server start` | Player | WOL で PC を起動し、ゲームを立ち上げる |
 | `/server stop` | Player | 保存 → 停止 → バックアップ → PC の電源オフ（接続者がいると拒否。Maintainer は `force:True` で強制可） |
-| `/server restart` | Maintainer | 保存してから Palworld だけ再起動（PC は落とさない） |
+| `/server restart` | Maintainer | ゲームだけ再起動（PC は落とさない） |
 | `/server address` | Player | 今の接続先（グローバル IP:ポート）を表示 |
-| `/取引` | 全員 | 闇商人からランダムでパル画像を受け取る（おまけ） |
+| `/server load` | Player | サーバー PC の負荷（接続人数・稼働時間・CPU・メモリ・ディスク・温度） |
+| `/取引` | 全員 | ランダムで画像を1枚渡す（おまけ） |
 
-Bot は Palworld の「闇商人」の口調で応答します。
+Bot は Palworld の「闇商人」の口調で応答します（前身プロジェクトからの名残）。
 
 ### 自動で動くもの
 
@@ -31,38 +32,34 @@ Discord
   ↓
 Raspberry Pi: Bot + Wake on LAN（常時起動）
   ↓ SSH（LAN 内・固定コマンドのみ）
-Linux Server PC: Palworld + systemd + backup（普段は電源オフ）
+Linux Server PC: Valheim + systemd + backup（普段は電源オフ）
 ```
 
-ルーターで開放するのは**ゲーム用の UDP ポートだけ**です。SSH と管理 API はインターネットへ公開しません。保守を外部から行いたい場合は Tailscale を併用できます（現構成では未使用）。
+ルーターで開放するのは**ゲーム用の UDP ポートだけ**です。SSH と管理系はインターネットへ公開しません。
 
 ## 方針
 
 - Discord ロール（Player / Maintainer）で権限を管理する。メンバーの増減はロールの付け外しだけで完結し、コードや設定は変更しない
 - Bot がサーバーへ送れるのは固定コマンドのみ。任意コマンドの実行や文字列の埋め込みは行わない
-- SSH と管理 API をインターネットへ公開しない
-- 最大人数などは Palworld サーバー側の設定を正とし、Bot に固定値を持たせない
+- SSH と管理系をインターネットへ公開しない
+- 最大人数などはゲームサーバー側の設定を正とし、Bot に固定値を持たせない
+- 配管（WOL・SSH・監視・通知）はゲームに依存しない。ゲーム固有の知識はサーバー側の制御スクリプトに閉じ込める
 
 ## セットアップ
 
-本番構築（サーバー PC + Raspberry Pi）の手順は次を参照してください。現地作業者が一人で完了できるコピペ手順書です。
-
-- **[docs/SETUP_PRODUCTION.md](docs/SETUP_PRODUCTION.md)** — 本番セットアップ手順書（サーバー PC / Pi / Discord / ルーター / 動作確認 / トラブルシューティング）
-
-検証記録:
-
-- [docs/VERIFICATION.md](docs/VERIFICATION.md) — 自宅検証（Windows Bot → macOS ダミーサーバー）
-- [docs/WSL_SERVER_VERIFICATION.md](docs/WSL_SERVER_VERIFICATION.md) — サーバー側検証（WSL + 実 Palworld サーバー、REST API の実測結果）
+- **[docs/VALHEIM_SETUP.md](docs/VALHEIM_SETUP.md)** — サーバー PC に Valheim を構築する手順（SteamCMD、systemd、ポート、バックアップ）
+- **[docs/SETUP_PRODUCTION.md](docs/SETUP_PRODUCTION.md)** — Bot 側（Raspberry Pi / Discord / ルーター）の構築と動作確認
 
 ## 設定
 
-Bot の設定は `config/bot.env.example` を元に作ります（本番では `/etc/palworld-bot/bot.env`）。主な任意項目:
+Bot の設定は `config/bot.env.example` を元に作ります（本番では `/etc/gameserver-bot/bot.env`）。主な任意項目:
 
 | キー | 既定 | 内容 |
 |---|---|---|
+| `GAME_NAME` | `Valheim` | status に表示するゲーム名 |
+| `GAME_PORT` | `2456` | `/server address` が表示するポート |
 | `IDLE_SHUTDOWN_MINUTES` | `30` | 無人がこの分数続くと自動シャットダウン。`0` で無効 |
 | `STATUS_POLL_INTERVAL_SECONDS` | `60` | 状態を確認する間隔。通知や表示の更新間隔にもなる |
-| `GAME_PORT` | `8211` | `/server address` が表示するポート |
 | `PUBLIC_IP_CHECK_INTERVAL_SECONDS` | `300` | グローバル IP を確認する間隔。`0` で無効 |
 | `DISCORD_AUDIT_CHANNEL_ID` | 空 | 自動通知の投稿先。空ならコマンド用チャンネル |
 
@@ -86,12 +83,15 @@ pytest
 
 - [CLAUDE.md](CLAUDE.md) — 実装方針とアーキテクチャの制約
 - [docs/SECURITY.md](docs/SECURITY.md) — セキュリティ設計
-- [docs/IMPLEMENTATION_SPEC.md](docs/IMPLEMENTATION_SPEC.md) — 設計書
 - [docs/OPERATIONS.md](docs/OPERATIONS.md) — 運用方針
 - [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md) — リポジトリの初期設定
 
 ## Git に含めないもの
 
-`.env`、Discord Bot Token、SSH 秘密鍵、Tailscale 認証キー、Palworld 管理者パスワード、セーブデータ、バックアップは追加しません。
+`.env`、Discord Bot Token、SSH 秘密鍵、ゲームの管理者パスワード、セーブデータ、バックアップは追加しません。
 
-`/取引` 用のパル画像（`src/palworld_bot/assets/pals/`）もゲームの著作物のため Git に含めていません。Bot を動かすマシンごとに手元で配置してください。
+`/取引` 用の画像（`src/gameserver_bot/assets/pals/`）もゲームの著作物のため Git に含めていません。Bot を動かすマシンごとに手元で配置してください。
+
+## 履歴
+
+このプロジェクトは Valheim の前に Palworld サーバーを運用していました。その版は **`v1.0-palworld`** タグに、当時のセットアップ手順と検証記録ごと保存されています。

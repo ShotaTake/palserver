@@ -1,6 +1,6 @@
 import pytest
 
-from palworld_bot.services.wol import build_magic_packet
+from gameserver_bot.services.wol import build_magic_packet
 
 
 def test_magic_packet_layout() -> None:

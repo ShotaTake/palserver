@@ -1,4 +1,4 @@
-from palworld_bot import __doc__
+from gameserver_bot import __doc__
 
 
 def test_package_is_importable() -> None:

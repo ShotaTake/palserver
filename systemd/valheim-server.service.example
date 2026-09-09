@@ -1,0 +1,36 @@
+# TEMPLATE ONLY. Adjust paths and review before installing.
+#
+# Two settings are easy to get wrong and both lose data:
+#   KillSignal=SIGINT  - Valheim only writes the world when it receives SIGINT.
+#                        With systemd's default SIGTERM the server dies without
+#                        saving and every stop rolls the world back.
+#   SteamAppId=892970  - the GAME's app id, not the dedicated server's (896660).
+#                        The bundled start_server.sh sets the same value.
+#
+# Name, world, and password come from an env file so they stay out of
+# `systemctl show` and `ps`. See docs/VALHEIM_SETUP.md.
+
+[Unit]
+Description=Valheim Dedicated Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=valheim
+Group=valheim
+WorkingDirectory=/opt/valheim-server
+EnvironmentFile=/etc/valheim/valheim.env
+Environment=LD_LIBRARY_PATH=/opt/valheim-server/linux64
+Environment=SteamAppId=892970
+ExecStart=/opt/valheim-server/valheim_server.x86_64 -nographics -batchmode \
+  -name ${VALHEIM_NAME} -port ${VALHEIM_PORT} -world ${VALHEIM_WORLD} \
+  -password ${VALHEIM_PASSWORD} -public ${VALHEIM_PUBLIC}
+Restart=on-failure
+RestartSec=15
+
+KillSignal=SIGINT
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

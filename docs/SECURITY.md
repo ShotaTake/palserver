@@ -2,21 +2,22 @@
 
 ## 1. 公開範囲
 
-ルーターで公開しないもの:
+ルーターで開放するのは**ゲームポート（UDP 2456-2457）だけ**。
+
+公開しないもの:
 
 - Raspberry PiのSSH
 - サーバーPCのSSH
-- Palworld REST API
-- Discord Bot用の独自ポート
+- Bot用の独自ポート（そもそも待ち受けない。BotはDiscordへ外向きに接続するだけ）
 
-管理接続はTailscale内だけで行う。
+管理接続はLAN内だけで行う。宅外から保守したい場合はVPN（Tailscale等）を足す。ポート転送で代用しない。
 
 ## 2. Discord権限
 
 メンバー数を固定しないため、User ID一覧ではなくDiscordロールIDで管理する。
 
-- Playerロール: status、start、0人時のstop
-- Maintainerロール: Player権限と管理停止
+- Playerロール: status、start、address、load、0人時のstop
+- Maintainerロール: Player権限に加えて、restartと強制stop
 
 BotはGuild ID、Channel ID、Role IDをすべて検証する。
 
@@ -24,12 +25,14 @@ Discordサーバーでロールを付与できる権限は、信頼できる管�
 
 ## 3. 任意コマンドを禁止
 
-Botがサーバーへ送信できる値は`status`、`start`、`stop`だけとする。
+Botがサーバーへ送信できるのは固定の名前だけ: `status`、`start`、`players`、`metrics`、`restart`、`shutdown`、`backup`、`poweroff`。
 
 - `shell=True`禁止
-- `/run`禁止
+- `/run`のような汎用実行コマンドを作らない
 - Discord入力をシェル文字列へ埋め込まない
-- サーバーPC側でも固定コマンド以外を拒否する
+- サーバーPC側でも、SSHの強制コマンド（`restrict,command="..."`）で固定名以外を拒否する
+
+二重にしているのは、片方の設定ミスだけでは任意実行にならないようにするため。
 
 ## 4. 停止時の保護
 
@@ -41,7 +44,17 @@ Botがサーバーへ送信できる値は`status`、`start`、`stop`だけと�
 
 人数の上限は固定しない。判定は常に実際の現在接続人数を使う。
 
-## 5. GitHub
+Valheimは`SIGINT`を受けたときにワールドを書き出す。保存はsystemdユニットの`KillSignal=SIGINT`に依存しているので、この設定を消さない。
+
+## 5. サーバーから返る値の扱い
+
+プレイヤー名などゲーム側の文字列は**信頼しない**。Discordへ出す前に長さを切り、メンションやコードブロックとして解釈されない形にする。ゲームに入れる人は必ずしもDiscordの参加者と同じではない。
+
+例外やコマンド出力をそのままDiscordへ流さない。ユーザーには短い日本語のメッセージを返し、詳細はログに残す。
+
+## 6. GitHub
+
+このリポジトリは**public**。push前に秘密情報が混ざっていないか必ず確認する。
 
 main直接pushを採用するが、次は禁止する。
 
@@ -50,4 +63,6 @@ main直接pushを採用するが、次は禁止する。
 - テスト未実行でのpush
 - 本番サーバー上だけを直接編集してGitと差を作ること
 
-main直接運用では誤変更をレビューで防げないため、push前の`git diff`確認と小さなcommitが必須になる。
+Gitに入れないもの: `.env`、Discord Bot Token、SSH秘密鍵、ゲームのパスワード、セーブデータ、バックアップ、ゲームの著作物（`/取引`用の画像）。
+
+秘密情報を誤ってpushした場合は、履歴から消すだけでなくTokenや鍵を失効・再発行する。

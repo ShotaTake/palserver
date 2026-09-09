@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Ask the Valheim server how many people are on, over Steam's A2S protocol.
+
+Valheim has no REST API, so the query port (game port + 1) is the only way to
+read the player count. Output uses the same `key=value` line format as the
+rest of the control script, so the bot parses it with the code it already has.
+
+Usage: valheim-query [query_port]   (default 2457)
+Exit 0 with `players=`/`max_players=` on success, non-zero if the server did
+not answer. Values are omitted rather than guessed.
+"""
+
+from __future__ import annotations
+
+import socket
+import sys
+
+HOST = "127.0.0.1"
+TIMEOUT_SECONDS = 3.0
+
+_HEADER = b"\xff\xff\xff\xff"
+_A2S_INFO = _HEADER + b"TSource Engine Query\x00"
+_A2S_PLAYER = _HEADER + b"U" + b"\xff\xff\xff\xff"
+_CHALLENGE = b"A"  # the server sends this when it wants the challenge echoed
+
+
+def _ask(
+    sock: socket.socket,
+    addr: tuple[str, int],
+    payload: bytes,
+    *,
+    challenge_replaces_tail: bool = False,
+) -> bytes:
+    """Send a query, transparently answering a challenge if one comes back.
+
+    A2S_INFO wants the challenge appended, but A2S_PLAYER carries a four-byte
+    placeholder that the challenge has to overwrite. Getting this backwards
+    makes the server keep asking for the challenge and no data ever arrives.
+    """
+    sock.sendto(payload, addr)
+    data, _ = sock.recvfrom(4096)
+    if data[4:5] == _CHALLENGE:
+        challenge = data[5:9]
+        retry = payload[:-4] + challenge if challenge_replaces_tail else payload + challenge
+        sock.sendto(retry, addr)
+        data, _ = sock.recvfrom(4096)
+    return data
+
+
+def _take_string(buf: bytes) -> tuple[str, bytes]:
+    end = buf.index(b"\x00")
+    return buf[:end].decode("utf-8", "replace"), buf[end + 1 :]
+
+
+def _parse_info(data: bytes) -> tuple[int, int]:
+    """Return (players, max_players) from an A2S_INFO reply."""
+    rest = data[6:]  # skip header + response type + protocol
+    for _ in range(4):  # name, map, folder, game
+        _, rest = _take_string(rest)
+    rest = rest[2:]  # AppID
+    return rest[0], rest[1]
+
+
+def _parse_players(data: bytes) -> list[str]:
+    """Return the connected player names from an A2S_PLAYER reply."""
+    if data[4:5] != b"D":
+        return []
+    rest = data[6:]  # skip header + response type + player count
+    names: list[str] = []
+    while rest:
+        rest = rest[1:]  # per-player index
+        name, rest = _take_string(rest)
+        rest = rest[8:]  # score (int32) + duration (float32)
+        if name:
+            names.append(name)
+    return names
+
+
+def main() -> int:
+    # Player names can be non-ASCII. Pin stdout to UTF-8 so a server running
+    # under a non-UTF-8 locale reports the name instead of crashing.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 2457
+    addr = (HOST, port)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(TIMEOUT_SECONDS)
+        try:
+            players, max_players = _parse_info(_ask(sock, addr, _A2S_INFO))
+        except (OSError, IndexError, ValueError):
+            print("could not query the server", file=sys.stderr)
+            return 1
+
+        print(f"players={players}")
+        print(f"max_players={max_players}")
+
+        # Names are a bonus: a server that answers A2S_PLAYER with nothing
+        # useful must not turn a good player count into a failure.
+        try:
+            reply = _ask(sock, addr, _A2S_PLAYER, challenge_replaces_tail=True)
+            for name in _parse_players(reply):
+                print(f"player={name}")
+        except (OSError, IndexError, ValueError):
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

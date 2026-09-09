@@ -14,13 +14,13 @@ from typing import Any
 import discord
 from discord import app_commands
 
-from palworld_bot import auth, pals
-from palworld_bot.config import BotConfig
-from palworld_bot.services import public_ip
-from palworld_bot.services.monitor import ServerMonitor
-from palworld_bot.services.server_manager import (
+from gameserver_bot import auth, pals
+from gameserver_bot.config import BotConfig
+from gameserver_bot.services import public_ip
+from gameserver_bot.services.monitor import ServerMonitor
+from gameserver_bot.services.server_manager import (
+    GameState,
     LoadReport,
-    PalworldState,
     PcState,
     RestartOutcome,
     ServerManager,
@@ -32,7 +32,7 @@ from palworld_bot.services.server_manager import (
 
 logger = logging.getLogger(__name__)
 
-# The bot speaks as Palworld's Black Marketeer (闇商人): a gruff, shady dealer.
+# The bot keeps Palworld's Black Marketeer (闇商人) voice: a gruff, shady dealer.
 # The flavour is prose only — the actual status data stays plain and readable.
 _GENERIC_ERROR_MESSAGE = "……ちっ、裏で厄介事だ。番人（ログ）に聞いてくれ。"
 
@@ -54,12 +54,12 @@ _RESTART_MESSAGES = {
 }
 
 
-def _format_status(report: StatusReport) -> str:
+def _format_status(report: StatusReport, game_name: str) -> str:
     lines = [
         "……様子が知りたいってのかい。ほらよ、目を通しな。",
         "",
         f"サーバーPC: {report.pc.value}",
-        f"Palworld: {report.palworld.value}",
+        f"{game_name}: {report.game.value}",
     ]
     if report.players is not None:
         if report.max_players is not None:
@@ -106,19 +106,6 @@ def _format_address(address: str | None, port: int) -> str:
     )
 
 
-# Palworld's dedicated server targets 60 fps; the distance from that cap is
-# what tells you whether the machine is keeping up.
-_TARGET_FPS = 60
-
-
-def _fps_comment(fps: int) -> str:
-    if fps >= 50:
-        return "余裕あり"
-    if fps >= 30:
-        return "やや重い"
-    return "重い"
-
-
 def _cpu_comment(usage_pct: float) -> str:
     if usage_pct < 50:
         return "余裕あり"
@@ -136,29 +123,24 @@ def _format_cpu_line(loadavg: float, cores: int | None) -> str:
     return f"CPU負荷: {loadavg:.2f} / {cores}コア = {usage:.0f}%（{_cpu_comment(usage)}）"
 
 
-def _format_load(report: LoadReport | None) -> str:
+def _format_load(report: LoadReport | None, game_name: str) -> str:
+    # Valheim exposes no server FPS (A2S carries only the player list), so the
+    # OS figures are what tell you whether the machine is coping.
     if report is None:
         return "……箱に手が届かねえ。まずは店を開けてからにしな。"
 
     lines = ["……店の具合を見てやろう。"]
 
-    if report.has_game_metrics and report.fps is not None:
-        fps_line = (
-            f"サーバーFPS: {report.fps} / {_TARGET_FPS}"
-            f"（{_fps_comment(report.fps)}）"
-        )
-        if report.fps_avg is not None:
-            fps_line += f" 平均 {report.fps_avg:.1f}"
-        lines.append(fps_line)
-        if report.players is not None:
-            lines.append(f"接続人数: {report.players}")
-        if report.basecamps is not None:
-            lines.append(f"拠点数: {report.basecamps}")
+    if report.has_game_metrics:
+        players = f"接続人数: {report.players}"
+        if report.max_players is not None:
+            players += f" / {report.max_players}"
+        lines.append(players)
         if report.uptime_seconds is not None:
             hours, minutes = divmod(report.uptime_seconds // 60, 60)
             lines.append(f"稼働時間: {hours}時間{minutes}分")
     else:
-        lines.append("Palworld: stopped（世界の具合は分からん）")
+        lines.append(f"{game_name}: stopped（世界の具合は分からん）")
 
     if report.loadavg is not None:
         lines.append(_format_cpu_line(report.loadavg, report.cpu_cores))
@@ -174,17 +156,15 @@ def _format_load(report: LoadReport | None) -> str:
         lines.append(disk)
     if report.cpu_temp is not None:
         lines.append(f"CPU温度: {report.cpu_temp}℃")
-    if report.game_backups is not None:
-        lines.append(f"ゲーム側バックアップ: {report.game_backups} 世代")
 
     return "\n".join(lines)
 
 
 def _format_presence(report: StatusReport) -> tuple[str, discord.Status]:
     """Bot activity text + status dot reflecting the current server state."""
-    if report.pc is PcState.OFFLINE or report.palworld is PalworldState.STOPPED:
+    if report.pc is PcState.OFFLINE or report.game is GameState.STOPPED:
         return "サーバー停止中", discord.Status.idle
-    if report.palworld is PalworldState.RUNNING:
+    if report.game is GameState.RUNNING:
         if report.players is None:
             return "起動中", discord.Status.online
         if report.max_players is not None:
@@ -239,7 +219,7 @@ async def _ensure_player(interaction: discord.Interaction, config: BotConfig) ->
 
 
 def build_server_group(config: BotConfig, manager: ServerManager) -> app_commands.Group:
-    group = app_commands.Group(name="server", description="Palworldサーバー操作")
+    group = app_commands.Group(name="server", description="ゲームサーバー操作")
 
     @group.command(name="status", description="サーバーの状態を確認します")
     async def status_command(interaction: discord.Interaction) -> None:
@@ -253,9 +233,9 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             logger.exception("status command failed")
             await _reply(interaction, _GENERIC_ERROR_MESSAGE)
             return
-        await _reply(interaction, _format_status(report))
+        await _reply(interaction, _format_status(report, config.game_name))
 
-    @group.command(name="start", description="サーバーPCとPalworldを起動します")
+    @group.command(name="start", description="サーバーPCとゲームを起動します")
     async def start_command(interaction: discord.Interaction) -> None:
         if not await _ensure_player(interaction, config):
             return
@@ -281,7 +261,7 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             logger.exception("load command failed")
             await _reply(interaction, _GENERIC_ERROR_MESSAGE)
             return
-        await _reply(interaction, _format_load(report))
+        await _reply(interaction, _format_load(report, config.game_name))
 
     @group.command(name="address", description="今の接続先アドレスを表示します")
     async def address_command(interaction: discord.Interaction) -> None:
@@ -298,7 +278,7 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
         await _reply(interaction, _format_address(address, config.game_port))
 
     @group.command(
-        name="restart", description="保存してからPalworldのみ再起動します（Maintainer専用）"
+        name="restart", description="保存してからゲームのみ再起動します（Maintainer専用）"
     )
     async def restart_command(interaction: discord.Interaction) -> None:
         if not await _ensure_player(interaction, config):
@@ -316,7 +296,7 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             return
         await _reply(interaction, _RESTART_MESSAGES[outcome])
 
-    @group.command(name="stop", description="Palworldを安全に停止します")
+    @group.command(name="stop", description="ゲームを安全に停止します")
     @app_commands.describe(force="接続者がいても停止します（Maintainer専用の確認操作）")
     async def stop_command(interaction: discord.Interaction, force: bool = False) -> None:
         if not await _ensure_player(interaction, config):
@@ -362,7 +342,7 @@ def build_trade_command(config: BotConfig) -> app_commands.Command[Any, ..., Non
     )
 
 
-class PalworldBotClient(discord.Client):
+class GameServerBotClient(discord.Client):
     """Discord client that registers the /server command group for one guild."""
 
     def __init__(self, config: BotConfig, manager: ServerManager) -> None:

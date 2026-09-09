@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fixed-command controller for the Valheim dedicated server.
+#
+# Invoked only through the SSH forced-command wrapper (valheim-control-ssh)
+# with one exact command name. It never evaluates arbitrary input and never
+# uses a shell to interpret arguments.
+#
+# Unlike Palworld there is no REST API and no admin password: the player count
+# comes from a local A2S query, and a graceful save happens because the systemd
+# unit stops the server with SIGINT (see systemd/valheim-server.service.example).
+
+CONFIG_FILE="${GAMESERVER_CONTROL_ENV:-/etc/gameserver-control/control.env}"
+
+# Defaults; override in CONFIG_FILE.
+VALHEIM_SERVICE="valheim-server.service"
+VALHEIM_QUERY_PORT="2457"
+VALHEIM_QUERY_SCRIPT="/usr/local/sbin/valheim-query"
+VALHEIM_WORLD_DIR="/home/valheim/.config/unity3d/IronGate/Valheim/worlds_local"
+GAMESERVER_BACKUP_SCRIPT="/usr/local/sbin/gameserver-backup"
+GAMESERVER_POWEROFF_SCRIPT="/usr/local/sbin/gameserver-safe-poweroff"
+VALHEIM_STOP_WAIT_SECONDS="120"
+
+if [ -e "$CONFIG_FILE" ]; then
+  # Refuse a group/world-writable config: it would let a non-root user inject
+  # settings, including the paths this script trusts.
+  if find "$CONFIG_FILE" -maxdepth 0 -perm /022 | grep -q .; then
+    printf '%s\n' 'config file must not be group/world writable' >&2
+    exit 77
+  fi
+  # shellcheck source=/dev/null
+  . "$CONFIG_FILE"
+fi
+
+_service_active() {
+  systemctl is-active --quiet "$VALHEIM_SERVICE"
+}
+
+_emit_num() {
+  # _emit_num KEY VALUE — print "key=value" only when the value looks numeric.
+  case "${2:-}" in
+    "") return 0 ;;
+    *[!0-9.]* | ".") return 0 ;;
+    *) printf '%s=%s\n' "$1" "$2" ;;
+  esac
+}
+
+_query() {
+  # Player count and names from the A2S query port. Fails when the server is
+  # not answering, so the caller can treat the count as unknown, not zero.
+  "$VALHEIM_QUERY_SCRIPT" "$VALHEIM_QUERY_PORT"
+}
+
+_uptime_seconds() {
+  # Valheim exposes no uptime, so take it from when systemd started the unit.
+  local started now
+  started="$(systemctl show -p ActiveEnterTimestamp --value "$VALHEIM_SERVICE" 2>/dev/null)"
+  [ -n "$started" ] || return 0
+  started="$(date -d "$started" +%s 2>/dev/null)" || return 0
+  now="$(date +%s)"
+  [ -n "$started" ] && [ "$now" -ge "$started" ] && printf '%s' "$((now - started))"
+}
+
+cmd_status() {
+  if _service_active; then
+    printf 'valheim=running\n'
+  else
+    printf 'valheim=stopped\n'
+  fi
+}
+
+cmd_start() {
+  sudo -n systemctl start "$VALHEIM_SERVICE"
+  printf 'started\n'
+}
+
+cmd_players() {
+  _query
+}
+
+cmd_shutdown() {
+  # The unit is configured with KillSignal=SIGINT, which is what makes Valheim
+  # write the world before exiting. A plain SIGTERM would lose progress.
+  if ! _service_active; then
+    printf 'stopped\n'
+    return 0
+  fi
+  sudo -n systemctl stop "$VALHEIM_SERVICE"
+  local waited=0
+  while _service_active; do
+    sleep 2
+    waited=$((waited + 2))
+    if [ "$waited" -ge "$VALHEIM_STOP_WAIT_SECONDS" ]; then
+      break
+    fi
+  done
+  if _service_active; then
+    printf '%s\n' 'valheim did not stop' >&2
+    exit 1
+  fi
+  printf 'stopped\n'
+}
+
+cmd_restart() {
+  # Stop (which saves via SIGINT) then start again. Uses only the sudo rules
+  # already granted for start/stop; the PC never powers off.
+  cmd_shutdown >/dev/null
+  sudo -n systemctl start "$VALHEIM_SERVICE"
+  printf 'restarted\n'
+}
+
+cmd_metrics() {
+  # Game figures need a running server; the OS ones are always available, so a
+  # stopped server still reports something useful. Every value is best effort:
+  # a line is omitted rather than guessed.
+  if _service_active; then
+    _query 2>/dev/null || true
+    _emit_num 'uptime' "$(_uptime_seconds)"
+  fi
+
+  _emit_num 'loadavg' "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)"
+  _emit_num 'cpu_cores' "$(nproc 2>/dev/null)"
+
+  local mem_total mem_avail
+  mem_total="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
+  mem_avail="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
+  if [ -n "$mem_total" ] && [ -n "$mem_avail" ]; then
+    printf 'mem_total_mb=%s\n' "$mem_total"
+    printf 'mem_used_mb=%s\n' "$((mem_total - mem_avail))"
+  fi
+
+  local df_line
+  df_line="$(df -BG --output=pcent,avail "$VALHEIM_WORLD_DIR" 2>/dev/null | tail -n1)"
+  if [ -n "$df_line" ]; then
+    _emit_num 'disk_use_pct' "$(printf '%s' "$df_line" | grep -oE '[0-9]+%' | tr -d '%')"
+    _emit_num 'disk_avail_gb' "$(printf '%s' "$df_line" | grep -oE '[0-9]+G' | tr -d 'G')"
+  fi
+
+  local temp_raw
+  temp_raw="$(_cpu_temp_millidegrees)"
+  if printf '%s' "$temp_raw" | grep -qE '^[0-9]+$'; then
+    printf 'cpu_temp=%s\n' "$((temp_raw / 1000))"
+  fi
+}
+
+_cpu_temp_millidegrees() {
+  # Prefer the real CPU sensor (coretemp on Intel, k10temp/zenpower on AMD).
+  # thermal_zone0 is only a reliable CPU reading on boards like the Pi; on a
+  # desktop it is often an ACPI zone that barely moves, so it is the fallback.
+  local hw name input label
+  for hw in /sys/class/hwmon/hwmon*; do
+    [ -r "$hw/name" ] || continue
+    name="$(cat "$hw/name" 2>/dev/null)"
+    case "$name" in
+      coretemp | k10temp | zenpower)
+        for input in "$hw"/temp*_input; do
+          [ -r "$input" ] || continue
+          label="$(cat "${input%_input}_label" 2>/dev/null || true)"
+          case "$label" in
+            "Package id 0" | Tctl | Tdie)
+              cat "$input"
+              return 0
+              ;;
+          esac
+        done
+        for input in "$hw"/temp*_input; do
+          if [ -r "$input" ]; then
+            cat "$input"
+            return 0
+          fi
+        done
+        ;;
+    esac
+  done
+  cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true
+}
+
+cmd_backup() {
+  "$GAMESERVER_BACKUP_SCRIPT"
+}
+
+cmd_poweroff() {
+  sudo -n "$GAMESERVER_POWEROFF_SCRIPT"
+}
+
+case "${1:-}" in
+  status) cmd_status ;;
+  start) cmd_start ;;
+  players) cmd_players ;;
+  metrics) cmd_metrics ;;
+  restart) cmd_restart ;;
+  shutdown) cmd_shutdown ;;
+  backup) cmd_backup ;;
+  poweroff) cmd_poweroff ;;
+  *)
+    printf '%s\n' 'invalid command' >&2
+    exit 64
+    ;;
+esac

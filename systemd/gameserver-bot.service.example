@@ -1,15 +1,15 @@
 [Unit]
-Description=Palworld Discord Operations Bot
-After=network-online.target tailscaled.service
+Description=Game Server Discord Operations Bot
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=palworld-bot
-Group=palworld-bot
-WorkingDirectory=/opt/palworld-server-ops
-EnvironmentFile=/etc/palworld-bot/bot.env
-ExecStart=/opt/palworld-server-ops/.venv/bin/palworld-bot
+User=gameserver-bot
+Group=gameserver-bot
+WorkingDirectory=/opt/gameserver-ops
+EnvironmentFile=/etc/gameserver-bot/bot.env
+ExecStart=/opt/gameserver-ops/.venv/bin/gameserver-bot
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=20
@@ -23,7 +23,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 RestrictRealtime=true
-ReadWritePaths=/var/lib/palworld-bot
+ReadWritePaths=/var/lib/gameserver-bot
 
 [Install]
 WantedBy=multi-user.target
