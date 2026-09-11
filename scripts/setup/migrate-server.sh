@@ -94,8 +94,19 @@ say "  - Valheim を起動して、人数取得が通ることを確認する"
 say "  - sudoers と SSH の受け口を更新する（内容を表示して確認します）"
 say ""
 say "Palworld のセーブデータとバックアップは削除しません。"
+say "Palworld が動いていても構いません。保存してから止めます。"
 
-confirm "サーバー PC を Valheim 構成に切り替えます。よろしいですか？"
+# The Pi's bot is still watching this machine and can power it off on its own:
+# thirty idle minutes triggers the auto shutdown, and anyone in Discord can
+# call /server stop. Either one lands in the middle of the SteamCMD download.
+say ""
+warn "先にラズパイ側で Bot を止めてください（まだなら別の端末で）:"
+say "    sudo systemctl stop palworld-bot.service"
+say ""
+say "止めないまま進めると、無人時の自動シャットダウンや誰かの /server stop で"
+say "作業中にこの PC の電源が落ちることがあります。"
+
+confirm "ラズパイの Bot は停止済みですか？ サーバー PC を Valheim 構成に切り替えます。"
 
 # ------------------------------------------------------- 2. retire Palworld
 

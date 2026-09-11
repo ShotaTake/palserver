@@ -330,6 +330,16 @@ journalctl -u gameserver-bot.service -n 20  # 「logged in as ...」が出てい
 
 サーバー PC が先です。ラズパイ側の最後の疎通確認が、サーバー PC の SSH 受け口が更新済みであることを前提にしています。
 
+### 0. ラズパイの Bot を止める（最初にやる）
+
+```bash
+sudo systemctl stop palworld-bot.service
+```
+
+Bot が動いている間は、**作業中にサーバー PC の電源が落ちる可能性があります**。無人が既定の 30 分続けば自動シャットダウンが走りますし、誰かが Discord で `/server stop` を叩いても同じです。SteamCMD のダウンロードには数分かかるので、その最中に落ちると厄介です。
+
+Palworld のサーバー本体は止めなくて構いません。次のスクリプトが保存してから止めます。
+
 ### 1. サーバー PC
 
 ```bash
