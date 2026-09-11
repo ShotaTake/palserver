@@ -63,9 +63,12 @@ sudo nano /etc/valheim/valheim.env
 VALHEIM_NAME=kgyValheim
 VALHEIM_WORLD=kgyWorld
 VALHEIM_PASSWORD=ここに5文字以上
-VALHEIM_PORT=2456
-VALHEIM_PUBLIC=1
+VALHEIM_PORT=35520
+VALHEIM_PUBLIC=0
+VALHEIM_MODIFIERS=-modifier resources most -modifier deathpenalty casual -modifier portals casual
 ```
+
+この内容は [config/valheim.env.example](../config/valheim.env.example) にそのまま入っています（パスワードだけ空）。`scripts/setup/migrate-server.sh` はそこから読むので、手で作る必要があるのはスクリプトを使わない場合だけです。
 
 ```bash
 sudo chown root:valheim /etc/valheim/valheim.env
@@ -76,7 +79,34 @@ sudo chmod 640 /etc/valheim/valheim.env
 
 - **パスワードは5文字以上**。**ワールド名を含めることはできません**（含むと起動に失敗します）
 - 値の後ろに `#` コメントを書かないでください（systemd が値の一部として読みます）
-- `VALHEIM_PUBLIC=1` にするとコミュニティのサーバー一覧に名前で載ります。**自宅がグローバル IP 変動制なので、名前で探してもらえるこの設定は相性が良い**です（IP を毎回共有しなくて済む）。一覧に出したくなければ `0` にして、IP 直接接続にします
+- `VALHEIM_PUBLIC=0` はコミュニティのサーバー一覧に載せない設定です。参加は IP 直接入力になります。グローバル IP が変わる回線ですが、変わるたびに Discord へ新しい接続先が自動投稿されるので実用上は困りません。一覧に載せたい場合は `1` にして、後述のクエリポートも開放してください
+- `VALHEIM_PORT=35520` は Palworld で使っていた番号の流用です。ルーターの転送ルールをそのまま使えます
+- `VALHEIM_MODIFIERS` はワールド修飾子（後述）。空でも構いません
+
+### ワールド修飾子（難易度）
+
+Valheim には Palworld の `ExpRate 3` のような数値の倍率設定がありません。代わりに**段階指定のワールド修飾子**を起動引数として渡します。この配備で決めた値:
+
+| キー | 値 | 効果 |
+|---|---|---|
+| `resources` | `most` | 採集・ドロップが約3倍 |
+| `deathpenalty` | `casual` | スキルが下がらず、装備もその場に残る |
+| `portals` | `casual` | 鉱石もポータルで運べる |
+| `combat` | 指定なし | 敵の強さは素のまま |
+| `raids` | 指定なし | 拠点襲撃の頻度も素のまま |
+
+`resources` の段階はおおよそ `muchless`(0.5) / `less`(0.75) / `normal`(1) / `more`(1.5) / `muchmore`(2) / `most`(3) です。
+
+死亡ペナルティを緩めたのは、少人数のサーバーで一番熱が冷めやすいのが死体回収の遠征だからです。ポータル制限も外してあるので、採集3倍と合わせて往復の時間がかなり減ります。戦闘と襲撃を素のままにしたのは、そこが Valheim の見せ場で、緩めると建築や探索の動機まで薄くなるためです。
+
+修飾子は**後からいつでも変えられます**。`valheim.env` を編集して `systemctl restart valheim-server.service` するだけです。固定されるのはシード（`VALHEIM_WORLD` で決まる地形）だけ。
+
+> **引数名は正式リリースの `-help` で未確認です。** サーバーが起動しない場合は、まずこの行を空にして切り分けてください。実際に使える引数は次で確認できます。
+>
+> ```bash
+> /opt/valheim-server/valheim_server.x86_64 -help
+> cat /opt/valheim-server/start_server.sh
+> ```
 
 ## 4. systemd ユニット（`KillSignal=SIGINT` が最重要）
 
@@ -100,7 +130,8 @@ Environment=LD_LIBRARY_PATH=/opt/valheim-server/linux64
 Environment=SteamAppId=892970
 ExecStart=/opt/valheim-server/valheim_server.x86_64 -nographics -batchmode \
   -name ${VALHEIM_NAME} -port ${VALHEIM_PORT} -world ${VALHEIM_WORLD} \
-  -password ${VALHEIM_PASSWORD} -public ${VALHEIM_PUBLIC}
+  -password ${VALHEIM_PASSWORD} -public ${VALHEIM_PUBLIC} \
+  $VALHEIM_MODIFIERS
 Restart=on-failure
 RestartSec=15
 
@@ -113,8 +144,9 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-**2つの落とし穴**:
+**3つの落とし穴**:
 
+- **`$VALHEIM_MODIFIERS` に波括弧を付けない**: systemd は `$VAR` を空白で分割して複数の引数にしますが、`${VAR}` は1つの引数として渡します。修飾子は複数の引数なので波括弧なし、サーバー名は空白を含みうるので `${VALHEIM_NAME}` のまま、という使い分けです
 - **`KillSignal=SIGINT`**: これが無いと `systemctl stop` のたびにワールドが巻き戻ります。Valheim には保存用の API が無いため、Bot の `/server stop` もこの仕組みに乗って保存します
 - **`SteamAppId=892970`**: サーバーの App ID（896660）ではなく**ゲーム本体の ID** を指定します。Valheim 付属の `start_server.sh` もこの値を使っています
 
@@ -130,27 +162,26 @@ systemctl status valheim-server.service
 
 ## 5. ネットワーク
 
-**ファイアウォール** — 以前確認したとき `2456:2458` は既に開いていました。念のため確認:
+ゲームポートは **35520**、クエリポートはその +1 の **35521** です。
+
+**ファイアウォール**:
 
 ```bash
-sudo ufw status | grep 245
+sudo ufw status | grep 3552
+sudo ufw allow 35520:35521/udp
 ```
 
-出ていなければ:
-
-```bash
-sudo ufw allow 2456:2457/udp
-```
-
-**ルーターのポート開放** — Valheim 用の転送を追加します（旧 Palworld 用の転送が残っていれば削除してください）:
+**ルーターのポート開放** — 転送が必要なのは **UDP 35520 だけ**です:
 
 | 項目 | 値 |
 |---|---|
 | プロトコル | **UDP** |
-| 外部/内部ポート | **2456-2457** |
+| 外部/内部ポート | **35520**（両方とも同じ番号にすること） |
 | 転送先 | **192.168.1.100**（サーバー PC） |
 
-2456 がゲーム本体、2457 がクエリ（サーバー一覧や人数取得に使用）です。
+Palworld で同じ番号を転送していたなら、**ルーターは触らなくて済みます**。ただし外部ポートだけ 35520 で内部が 8211 のようなポート変換になっている場合は、内部側も 35520 に直してください。
+
+クエリポート 35521 を開ける必要が無いのは、人数取得が `127.0.0.1` 宛だからです（[scripts/server/valheim-query](../scripts/server/valheim-query)）。外から叩かれる用途は、サーバー一覧に載せる（`VALHEIM_PUBLIC=1`）ときだけです。
 
 ## 6. 起動確認
 
@@ -166,7 +197,7 @@ journalctl -u valheim-server.service -f
 python3 - <<'PY'
 import socket, struct
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(3)
-addr = ("127.0.0.1", 2457)
+addr = ("127.0.0.1", 35521)
 req = b"\xff\xff\xff\xffTSource Engine Query\x00"
 s.sendto(req, addr); data, _ = s.recvfrom(4096)
 if data[4:5] == b"A":                      # チャレンジ応答なら付け直して再送
@@ -184,8 +215,9 @@ PY
 
 ## 7. クライアントから参加
 
-- `VALHEIM_PUBLIC=1` の場合: ゲーム内のサーバー一覧で**サーバー名で検索**
-- 直接指定の場合: `グローバルIP:2456`（現在の IP は Discord の `/server address` で確認できます）
+- `グローバルIP:35520` を直接指定して参加します。現在の接続先は Discord の `/server address` で確認できます（IP が変わったときは自動で通知されます）
+- LAN 内からは `192.168.1.100:35520`
+- `VALHEIM_PUBLIC=1` にした場合のみ、ゲーム内のサーバー一覧からサーバー名で探せます
 - どちらもサーバーパスワードが必要です
 
 ## 8. バックアップ

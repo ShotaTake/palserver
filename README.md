@@ -66,7 +66,7 @@ Bot の設定は `config/bot.env.example` を元に作ります（本番では `
 | キー | 既定 | 内容 |
 |---|---|---|
 | `GAME_NAME` | `Valheim` | status に表示するゲーム名 |
-| `GAME_PORT` | `2456` | `/server address` が表示するポート |
+| `GAME_PORT` | `35520` | `/server address` が表示するポート。`config/valheim.env.example` の `VALHEIM_PORT` と揃える |
 | `IDLE_SHUTDOWN_MINUTES` | `30` | 無人がこの分数続くと自動シャットダウン。`0` で無効 |
 | `STATUS_POLL_INTERVAL_SECONDS` | `60` | 状態を確認する間隔。通知や表示の更新間隔にもなる |
 | `PUBLIC_IP_CHECK_INTERVAL_SECONDS` | `300` | グローバル IP を確認する間隔。`0` で無効 |

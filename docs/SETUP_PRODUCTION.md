@@ -10,7 +10,7 @@
 [設置場所（自宅）]
   Raspberry Pi ── 常時起動。Discord Bot + Wake on LAN 送信
   サーバー PC  ── Ubuntu + Valheim。普段は電源オフ、遊ぶときだけ Bot が起こす
-  ルーター     ── ゲームポート UDP 2456-2457 だけ開放（SSH や管理ポートは開放しない）
+  ルーター     ── ゲームポート UDP 35520 だけ開放（SSH や管理ポートは開放しない）
 [インターネット]
   Discord ⇔ Pi（Bot が外向きに接続。着信ポート開放は不要）
 ```
@@ -89,7 +89,7 @@ sudo poweroff
 - SteamCMD で App ID **896660** を導入
 - `/etc/valheim/valheim.env`（サーバー名・ワールド名・パスワード）
 - `valheim-server.service`（**`KillSignal=SIGINT` と `SteamAppId=892970` が必須**）
-- `sudo ufw allow 2456:2457/udp`
+- `sudo ufw allow 35520:35521/udp`
 
 `systemctl status valheim-server.service` が `active (running)` になり、**一度停止して再起動してもワールドの進行が残る**ことまで確認してから先へ進みます。
 
@@ -121,14 +121,23 @@ sudo install -m 0755 scripts/server/gameserver-safe-poweroff /usr/local/sbin/gam
 sudo install -d -o palbotctl -g palbotctl -m 0750 /var/lib/gameserver-backups
 ```
 
-既定値（サービス名 `valheim-server.service`、クエリポート 2457、ワールド `/home/valheim/.config/unity3d/IronGate/Valheim/worlds_local`）から変える場合だけ、設定ファイルを置きます:
+クエリポートを設定します。`valheim-control` の既定は 2457 なので、**ゲームポートを 35520 にしている以上ここは必須**です。書かないと起動状態は正しく出るのに人数だけ取れません。
 
 ```bash
 sudo mkdir -p /etc/gameserver-control
-sudo nano /etc/gameserver-control/control.env      # 例: VALHEIM_QUERY_PORT="2457"
+sudo nano /etc/gameserver-control/control.env
+```
+
+```bash
+VALHEIM_QUERY_PORT="35521"
+```
+
+```bash
 sudo chown root:palbotctl /etc/gameserver-control/control.env
 sudo chmod 640 /etc/gameserver-control/control.env
 ```
+
+サービス名やワールドの場所も同じファイルで上書きできます。**group/world 書き込み可だとスクリプトが読み込みを拒否する**ので 640 を守ってください。
 
 > Valheim には管理パスワードの類が要りません。control.env に秘密情報を書く必要はありません。
 
@@ -250,7 +259,7 @@ sudo chmod 600 /etc/gameserver-bot/bot.env
 | `SERVER_SSH_USER` | `palbotctl` |
 | `SERVER_SSH_KEY_PATH` | `/var/lib/gameserver-bot/.ssh/id_ed25519` |
 | `SERVER_SSH_KNOWN_HOSTS_PATH` | `/var/lib/gameserver-bot/.ssh/known_hosts` |
-| `GAME_PORT` | `2456` |
+| `GAME_PORT` | `35520` |
 
 > 値の後ろに `# コメント` を書かないこと。systemd の `EnvironmentFile` はコメントごと値として読みます。
 
@@ -288,7 +297,7 @@ journalctl -u gameserver-bot.service -n 20  # 「logged in as ...」が出てい
 
 | 設定 | 内容 |
 |---|---|
-| ポート開放 | **UDP 2456-2457 → サーバー PC** だけ。2456 がゲーム本体、2457 がクエリ（サーバー一覧・人数取得） |
+| ポート開放 | **UDP 35520 → サーバー PC** だけ。外部・内部とも同じ番号にすること。クエリポート 35521 は人数取得が loopback 経由なので転送不要（サーバー一覧に載せる場合のみ必要） |
 | 開放しないもの | SSH(22) / Bot 関連。管理接続は LAN 内だけで行う |
 | DHCP 固定 | サーバー PC と Pi の IP を DHCP 予約で固定しておくと安定する |
 
@@ -304,7 +313,7 @@ journalctl -u gameserver-bot.service -n 20  # 「logged in as ...」が出てい
    - 初回は安全のため、サーバー PC の `/etc/gameserver-control/control.env` に `GAMESERVER_POWEROFF_DRYRUN="1"` を入れて試し、問題なければ行を消して本番挙動にするのも可
 4. [ ] **セーブ確認**: 上の停止のあと起動し直して、**ワールドの進行が残っている**（SIGINT が効いている証拠。ここが一番重要）
 5. [ ] **WOL 起動**: PC が電源オフの状態で `/server start` → PC が起動 → 「サーバーを起動しました。」（数分かかる。タイムアウトする場合は A-2 を見直し）
-6. [ ] **ゲーム参加**: Valheim クライアントから「グローバル IP:2456」または LAN 内なら「サーバーPCのIP:2456」+ サーバーパスワードで参加
+6. [ ] **ゲーム参加**: Valheim クライアントから「グローバル IP:35520」または LAN 内なら「192.168.1.100:35520」+ サーバーパスワードで参加
 7. [ ] **人数表示**: 誰かが入った状態で `/server status` → `接続人数: 1 / N`
 8. [ ] **停止拒否**: 誰かが入った状態で `/server stop` → 拒否される。Maintainer の `/server stop force:True` でのみ停止できる
 9. [ ] **自動復帰**: Pi を再起動 → Bot が自動起動する（B-6 の enable）
@@ -358,7 +367,9 @@ Discord トークンも SSH 鍵も**既存の設定から引き継ぐ**ので、
 
 ### 3. ルーター
 
-UDP 8211 の転送を削除し、UDP 2456-2457 をサーバー PC へ転送します。ここだけは手作業です。
+ここだけは手作業です。ゲームポートは Palworld と同じ **35520** を使うので、既存の転送ルールが `35520 → 35520` になっていれば**何もしなくて済みます**。
+
+確認してほしいのは 1 点だけ: 外部ポートが 35520 で内部ポートが 8211 のような**ポート変換になっていないか**。なっていたら内部側も 35520 に直してください。
 
 ### 4. 確認と片付け
 
@@ -415,6 +426,12 @@ sudo install -m 0755 scripts/server/gameserver-safe-poweroff /usr/local/sbin/gam
 
 # 3. バックアップ先
 sudo install -d -o palbotctl -g palbotctl -m 0750 /var/lib/gameserver-backups
+
+# 4. クエリポート（ゲームポート 35520 に対して +1）。既定の 2457 のままだと人数が取れない
+sudo mkdir -p /etc/gameserver-control
+echo 'VALHEIM_QUERY_PORT="35521"' | sudo tee /etc/gameserver-control/control.env
+sudo chown root:palbotctl /etc/gameserver-control/control.env
+sudo chmod 640 /etc/gameserver-control/control.env
 ```
 
 `authorized_keys` の forced command を新しいラッパーへ向けます。**手で開いて 1 行を書き換えてください**（この行は Bot の権限そのものなので、目で確認してから直します）:
@@ -471,8 +488,10 @@ sudo chmod 600 /etc/gameserver-bot/bot.env
 |---|---|
 | `SERVER_SSH_KEY_PATH` | `/var/lib/gameserver-bot/.ssh/id_ed25519` |
 | `SERVER_SSH_KNOWN_HOSTS_PATH` | `/var/lib/gameserver-bot/.ssh/known_hosts` |
-| `GAME_PORT` | `2456` |
+| `GAME_PORT` | `35520` |
 | `GAME_NAME` | `Valheim`（無ければ追記） |
+
+サーバー PC 側で `/etc/gameserver-control/control.env` に `VALHEIM_QUERY_PORT="35521"` を書くのも忘れないでください（A-5）。ここを飛ばすと `/server status` の人数だけが空になります。
 
 ```bash
 # 5. サービスを入れ替え
@@ -490,7 +509,7 @@ sudo userdel -r palworld-bot
 
 `/取引` の画像を旧クローンに置いていた場合は、消す前に新しい場所へ移してください。
 
-**ルーター:** UDP 8211 の転送を削除し、UDP 2456-2457 をサーバー PC へ転送します。
+**ルーター:** ゲームポートは 35520 のままなので、既存の転送が `35520 → 35520` なら変更不要です。ポート変換になっている場合だけ内部側を 35520 に直します。
 ---
 
 # トラブルシューティング
@@ -503,7 +522,7 @@ sudo userdel -r palworld-bot
 | 「バックアップに失敗したため、サーバーPCの電源は切りません。」 | バックアップ先の権限不足が典型。`ls -ld /var/lib/gameserver-backups` が `palbotctl` 所有か確認（A-5）。※電源が切れないのは安全設計どおり |
 | 停止のたびにワールドが巻き戻る | `valheim-server.service` に `KillSignal=SIGINT` が無い。VALHEIM_SETUP.md の 4 章 |
 | SSH で `bash\r: No such file or directory` | スクリプトが Windows 改行(CRLF)になっている。`sudo sed -i 's/\r$//' /usr/local/sbin/valheim-*` で修正 |
-| `players` が取れない | クエリポート（既定 2457）が塞がっていないか、`valheim-query` が `/usr/local/sbin` にあるかを確認 |
+| `players` が取れない（状態は出るのに人数だけ空） | `/etc/gameserver-control/control.env` の `VALHEIM_QUERY_PORT` がゲームポート+1（35521）になっているか確認。既定の 2457 のままだとこうなる |
 | Bot のログを見たい | Pi で `journalctl -u gameserver-bot.service -f` |
 | サーバーのログを見たい | サーバー PC で `journalctl -u valheim-server.service -f` |
 

@@ -33,9 +33,20 @@ OLD_REPO_DIR=/opt/palworld-server-ops
 OLD_BOT_ENV=/etc/palworld-bot/bot.env
 OLD_BOT_SERVICE=palworld-bot.service
 
+GAME_PORT=''
+usage_extra=' [--game-port N]'
 parse_common_args "$@"
 set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
-[ $# -eq 0 ] || fail "不明な引数: $1  (--help で使い方)"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --game-port)
+      GAME_PORT="${2:-}"
+      [ -n "$GAME_PORT" ] || fail "--game-port に番号を指定してください。"
+      shift 2
+      ;;
+    *) fail "不明な引数: $1  (--help で使い方)" ;;
+  esac
+done
 
 banner "ラズパイ: Discord Bot を Valheim 構成へ"
 
@@ -200,9 +211,18 @@ set_env_key() {
   fi
 }
 
+# The game port is decided once, in the repository, so both machines agree
+# without anyone having to remember a number. GAME_PORT is what /server
+# address tells people to connect to.
+if [ -z "$GAME_PORT" ]; then
+  GAME_PORT="$(read_value "$REPO_ROOT/config/valheim.env.example" VALHEIM_PORT)"
+fi
+GAME_PORT="${GAME_PORT:-2456}"
+case "$GAME_PORT" in '' | *[!0-9]*) fail "ゲームポートが数値ではありません: $GAME_PORT" ;; esac
+
 set_env_key SERVER_SSH_KEY_PATH "$KEY_PATH"
 set_env_key SERVER_SSH_KNOWN_HOSTS_PATH "$KNOWN_HOSTS"
-set_env_key GAME_PORT 2456
+set_env_key GAME_PORT "$GAME_PORT"
 set_env_key GAME_NAME Valheim
 
 if ! dry_run; then
@@ -307,7 +327,7 @@ say ""
 ok "ラズパイ側は完了です。"
 say ""
 say "残っている手作業:"
-say "  ルーター: UDP 8211 の転送を削除し、UDP 2456-2457 をサーバー PC へ転送"
+say "  ルーター: UDP $GAME_PORT がサーバー PC へ転送されていることを確認"
 say ""
 say "Discord で確認してください:"
 say "  /server status → Valheim が running"

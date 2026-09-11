@@ -9,6 +9,11 @@
 #
 # Name, world, and password come from an env file so they stay out of
 # `systemctl show` and `ps`. See docs/VALHEIM_SETUP.md.
+#
+# The braces in ExecStart are load-bearing. systemd splits $VAR on whitespace
+# into separate arguments but passes ${VAR} as one. So the world modifiers,
+# which are several arguments, must be written $VALHEIM_MODIFIERS, while the
+# server name, which may contain spaces, must stay ${VALHEIM_NAME}.
 
 [Unit]
 Description=Valheim Dedicated Server
@@ -25,7 +30,8 @@ Environment=LD_LIBRARY_PATH=/opt/valheim-server/linux64
 Environment=SteamAppId=892970
 ExecStart=/opt/valheim-server/valheim_server.x86_64 -nographics -batchmode \
   -name ${VALHEIM_NAME} -port ${VALHEIM_PORT} -world ${VALHEIM_WORLD} \
-  -password ${VALHEIM_PASSWORD} -public ${VALHEIM_PUBLIC}
+  -password ${VALHEIM_PASSWORD} -public ${VALHEIM_PUBLIC} \
+  $VALHEIM_MODIFIERS
 Restart=on-failure
 RestartSec=15
 

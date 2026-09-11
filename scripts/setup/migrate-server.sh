@@ -27,6 +27,7 @@ VALHEIM_SERVICE=valheim-server.service
 CTL_USER=palbotctl
 SBIN=/usr/local/sbin
 BACKUP_DIR=/var/lib/gameserver-backups
+CONTROL_ENV=/etc/gameserver-control/control.env
 SUDOERS=/etc/sudoers.d/gameserver-control
 OLD_UNIT=/etc/systemd/system/palworld-server.service
 OLD_SERVICE=palworld-server.service
@@ -216,43 +217,53 @@ read_value() {
 if [ -e "$VALHEIM_ENV" ]; then
   ok "$VALHEIM_ENV は既にあります。中身はそのまま使います。"
   V_PORT="$(read_value "$VALHEIM_ENV" VALHEIM_PORT)"
+  V_MODIFIERS="$(read_value "$VALHEIM_ENV" VALHEIM_MODIFIERS)"
 else
-  if [ -n "$VALUES_FILE" ]; then
-    [ -r "$VALUES_FILE" ] || fail "$VALUES_FILE が読めません。"
-    V_NAME="$(read_value "$VALUES_FILE" VALHEIM_NAME)"
-    V_WORLD="$(read_value "$VALUES_FILE" VALHEIM_WORLD)"
-    V_PASSWORD="$(read_value "$VALUES_FILE" VALHEIM_PASSWORD)"
-    V_PORT="$(read_value "$VALUES_FILE" VALHEIM_PORT)"
-    V_PUBLIC="$(read_value "$VALUES_FILE" VALHEIM_PUBLIC)"
-  else
-    say "Valheim の設定を入力してください（$VALHEIM_ENV に保存します）。"
-    printf 'サーバー名: '
-    read -r V_NAME < /dev/tty
-    printf 'ワールド名: '
-    read -r V_WORLD < /dev/tty
-    printf 'サーバーパスワード（5文字以上・ワールド名を含めない・表示されません）: '
-    read -rs V_PASSWORD < /dev/tty
-    printf '\n'
-    V_PORT=2456
-    V_PUBLIC=1
-  fi
+  # Everything except the password is decided in the repository, so the usual
+  # run reads it from there and only asks for what was left blank.
+  [ -n "$VALUES_FILE" ] || VALUES_FILE="$REPO_ROOT/config/valheim.env.example"
+  [ -r "$VALUES_FILE" ] || fail "$VALUES_FILE が読めません。"
+  note "設定値の読み込み元: $VALUES_FILE"
+
+  V_NAME="$(read_value "$VALUES_FILE" VALHEIM_NAME)"
+  V_WORLD="$(read_value "$VALUES_FILE" VALHEIM_WORLD)"
+  V_PASSWORD="$(read_value "$VALUES_FILE" VALHEIM_PASSWORD)"
+  V_PORT="$(read_value "$VALUES_FILE" VALHEIM_PORT)"
+  V_PUBLIC="$(read_value "$VALUES_FILE" VALHEIM_PUBLIC)"
+  V_MODIFIERS="$(read_value "$VALUES_FILE" VALHEIM_MODIFIERS)"
 
   V_PORT="${V_PORT:-2456}"
   V_PUBLIC="${V_PUBLIC:-1}"
 
-  [ -n "$V_NAME" ] || fail "サーバー名が空です。"
-  [ -n "$V_WORLD" ] || fail "ワールド名が空です。"
+  [ -n "$V_NAME" ] || fail "$VALUES_FILE に VALHEIM_NAME がありません。"
+  [ -n "$V_WORLD" ] || fail "$VALUES_FILE に VALHEIM_WORLD がありません。"
   case "$V_WORLD" in *[[:space:]]*) fail "ワールド名に空白は使えません。" ;; esac
-  [ "${#V_PASSWORD}" -ge 5 ] || fail "パスワードは5文字以上にしてください。"
-  # The server refuses to start when the password contains the world name.
-  pw_lower="${V_PASSWORD,,}"
-  world_lower="${V_WORLD,,}"
-  case "$pw_lower" in
-    *"$world_lower"*)
-      fail "パスワードにワールド名を含めることはできません（起動に失敗します）。"
-      ;;
-  esac
   case "$V_PORT" in '' | *[!0-9]*) fail "VALHEIM_PORT が数値ではありません。" ;; esac
+
+  say "サーバー名 $V_NAME / ワールド名 $V_WORLD / ポート $V_PORT / 一覧公開 $V_PUBLIC"
+
+  if [ -z "$V_PASSWORD" ]; then
+    if dry_run; then
+      V_PASSWORD='(dry-run のためプロンプトは出しません)'
+      note "本番実行ではここでサーバーパスワードを聞きます。"
+    else
+      printf 'サーバーパスワード（5文字以上・「%s」を含めない・入力は表示されません）: ' "$V_WORLD"
+      read -rs V_PASSWORD < /dev/tty
+      printf '\n'
+    fi
+  fi
+
+  if ! dry_run; then
+    [ "${#V_PASSWORD}" -ge 5 ] || fail "パスワードは5文字以上にしてください。"
+    # The server refuses to start when the password contains the world name.
+    pw_lower="${V_PASSWORD,,}"
+    world_lower="${V_WORLD,,}"
+    case "$pw_lower" in
+      *"$world_lower"*)
+        fail "パスワードにワールド名を含めることはできません（起動に失敗します）。"
+        ;;
+    esac
+  fi
 
   write_file "$VALHEIM_ENV" 0640 "root:$VALHEIM_USER" <<EOF
 VALHEIM_NAME=$V_NAME
@@ -260,6 +271,7 @@ VALHEIM_WORLD=$V_WORLD
 VALHEIM_PASSWORD=$V_PASSWORD
 VALHEIM_PORT=$V_PORT
 VALHEIM_PUBLIC=$V_PUBLIC
+VALHEIM_MODIFIERS=$V_MODIFIERS
 EOF
   ok "$VALHEIM_ENV を作成しました（パスワードは表示していません）。"
 fi
@@ -267,6 +279,9 @@ fi
 V_PORT="${V_PORT:-2456}"
 QUERY_PORT=$((V_PORT + 1))
 note "ゲームポート $V_PORT / クエリポート $QUERY_PORT"
+if [ -n "${V_MODIFIERS:-}" ]; then
+  note "ワールド修飾子: $V_MODIFIERS"
+fi
 
 # --- unit ----------------------------------------------------------------
 
@@ -310,6 +325,30 @@ done
 # here makes every backup fail — and a failed backup blocks the poweroff.
 run install -d -o "$CTL_USER" -g "$CTL_USER" -m 0750 "$BACKUP_DIR"
 
+# valheim-control defaults to query port 2457. On any other game port the
+# player count would quietly come back empty while the running/stopped state
+# still looked right, so pin it here rather than relying on the default.
+run install -d -m 0755 /etc/gameserver-control
+if [ -e "$CONTROL_ENV" ]; then
+  printf '%s  → %s の VALHEIM_QUERY_PORT を %s に%s\n' \
+    "$_C_DIM" "$CONTROL_ENV" "$QUERY_PORT" "$_C_OFF"
+  if ! dry_run; then
+    backup_file "$CONTROL_ENV"
+    if grep -q '^VALHEIM_QUERY_PORT=' "$CONTROL_ENV"; then
+      sed -i "s|^VALHEIM_QUERY_PORT=.*|VALHEIM_QUERY_PORT=\"$QUERY_PORT\"|" "$CONTROL_ENV"
+    else
+      printf 'VALHEIM_QUERY_PORT="%s"\n' "$QUERY_PORT" >> "$CONTROL_ENV"
+    fi
+  fi
+else
+  write_file "$CONTROL_ENV" 0640 "root:$CTL_USER" <<EOF
+# Installed by scripts/setup/migrate-server.sh.
+# Overrides for the control scripts. Must not be group/world writable — they
+# refuse to read it otherwise, because it names the paths they trust.
+VALHEIM_QUERY_PORT="$QUERY_PORT"
+EOF
+fi
+
 ufw_state=''
 if have_cmd ufw; then
   ufw_state="$(ufw status 2>/dev/null | head -n 1 || true)"
@@ -325,6 +364,20 @@ step "Valheim の起動と応答確認"
 
 run systemctl start "$VALHEIM_SERVICE"
 
+# The modifier argument names are the least certain thing here: a game update
+# can rename them, and the server then refuses to start. Say so at the point
+# of failure, where it is actionable.
+modifier_hint() {
+  if [ -n "${V_MODIFIERS:-}" ]; then
+    say ""
+    warn "ワールド修飾子を渡しています: $V_MODIFIERS"
+    say "  引数名がこのビルドで通らない可能性があります。切り分けるには"
+    say "  $VALHEIM_ENV の VALHEIM_MODIFIERS を空にして、"
+    say "  systemctl restart $VALHEIM_SERVICE を試してください。"
+    say "  正しい引数は /opt/valheim-server/valheim_server.x86_64 -help で分かります。"
+  fi
+}
+
 if dry_run; then
   skipped "起動確認"
 else
@@ -338,6 +391,7 @@ else
     if ! unit_active "$VALHEIM_SERVICE"; then
       say ""
       journalctl -u "$VALHEIM_SERVICE" -n 40 --no-pager || true
+      modifier_hint
       fail "Valheim が落ちました。上のログを送ってください。"
     fi
     sleep 5
@@ -345,6 +399,7 @@ else
   if [ "$answered" -ne 1 ]; then
     say ""
     journalctl -u "$VALHEIM_SERVICE" -n 40 --no-pager || true
+    modifier_hint
     fail "5分待っても人数取得に応答がありません。上のログを送ってください。"
   fi
   ok "応答あり: $("$SBIN/valheim-query" "$QUERY_PORT" | tr '\n' ' ')"
@@ -504,7 +559,9 @@ say ""
 say "次にやること:"
 say "  1. ラズパイで:  sudo bash scripts/setup/migrate-pi.sh --dry-run"
 say "     問題なければ --dry-run を外して本番実行"
-say "  2. ルーター: UDP 8211 の転送を削除し、UDP $V_PORT-$QUERY_PORT をこの PC へ転送"
+say "  2. ルーター: UDP $V_PORT がこの PC へ転送されていることを確認"
+say "     クエリポート $QUERY_PORT は loopback でしか使わないので転送不要です"
+say "     （一覧公開を有効にする場合だけ $QUERY_PORT も開けてください）"
 say ""
 say "全部動いたあとに、旧 Palworld 環境を片付けるスクリプトがあります:"
 say "  sudo bash scripts/setup/cleanup-palworld.sh"
