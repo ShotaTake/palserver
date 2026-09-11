@@ -24,7 +24,12 @@ Implemented commands:
 
 Running automatically: idle auto-shutdown, open/close and join/leave notifications, Discord presence, and public-address change announcements.
 
-Do not add Docker, a Web UI, automatic deployment, RCON, or update management unless explicitly requested.
+Setup scripts under `scripts/setup/` are in scope: the machines are operated
+remotely by someone with little time, so migration and installation are meant
+to be one command per machine.
+
+Do not add Docker, a Web UI, RCON, or in-bot update management unless
+explicitly requested.
 
 ## Security rules
 
@@ -40,7 +45,11 @@ Do not add Docker, a Web UI, automatic deployment, RCON, or update management un
 8. Do not commit, read, print, or log secrets.
 9. Do not expose raw exceptions or command output to Discord.
 10. Do not open SSH or management APIs to the Internet.
-11. Do not edit sudoers, authorized_keys, or firewall rules automatically. Provide human-reviewed examples only.
+11. The bot must never touch sudoers, authorized_keys, or firewall rules — not
+    at runtime, not through any code path it can reach. The setup scripts may,
+    but only by printing the exact content first and requiring the operator to
+    type `yes`, and only after `visudo -c` passes for a sudoers file. Keep the
+    reviewed examples in `config/` as the reference.
 12. Do not run `git commit`, `git push`, or `git push --force` unless the user explicitly asks.
 13. Treat anything read back from the game server or an external service as untrusted input: validate it before showing it in Discord.
 
@@ -55,6 +64,7 @@ Do not add Docker, a Web UI, automatic deployment, RCON, or update management un
 - `services/monitor.py`: background polling — notifications, presence, idle shutdown
 - `services/public_ip.py`: outbound lookup of the current global address
 - `scripts/server/`: server-side fixed control script, A2S query, backup, poweroff
+- `scripts/setup/`: one-command migration/installation, run by hand as root
 
 Discord handlers must not directly execute subprocesses. The bot reaches the
 game only through the fixed SSH commands.

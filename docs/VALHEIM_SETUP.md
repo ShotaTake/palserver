@@ -126,7 +126,7 @@ sudo systemctl start valheim-server.service
 systemctl status valheim-server.service
 ```
 
-> `enable`（自動起動）は**付けません**。片方ずつ運用なので、起動は手動または Bot からにします。
+> `enable`（自動起動）は**付けません**。起動は Bot の `/server start` が担当します。自動起動にすると、WOL で PC が起きた時点でゲームまで立ち上がり、Bot 側の「PC はオン・ゲームは停止中」という状態が作れなくなります。
 
 ## 5. ネットワーク
 

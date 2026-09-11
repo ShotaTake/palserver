@@ -50,6 +50,15 @@ Linux Server PC: Valheim + systemd + backup（普段は電源オフ）
 - **[docs/VALHEIM_SETUP.md](docs/VALHEIM_SETUP.md)** — サーバー PC に Valheim を構築する手順（SteamCMD、systemd、ポート、バックアップ）
 - **[docs/SETUP_PRODUCTION.md](docs/SETUP_PRODUCTION.md)** — Bot 側（Raspberry Pi / Discord / ルーター）の構築と動作確認
 
+Palworld 版から移行する場合は、各マシンでスクリプトを1本実行するだけです。
+
+```bash
+sudo bash scripts/setup/migrate-server.sh --dry-run    # サーバー PC（先）
+sudo bash scripts/setup/migrate-pi.sh --dry-run        # ラズパイ（後）
+```
+
+`--dry-run` は何も変更せず実行内容を表示するだけなので、まずこれを流して確認してから外してください。詳細は SETUP_PRODUCTION.md の Part F。
+
 ## 設定
 
 Bot の設定は `config/bot.env.example` を元に作ります（本番では `/etc/gameserver-bot/bot.env`）。主な任意項目:

@@ -313,7 +313,91 @@ journalctl -u gameserver-bot.service -n 20  # 「logged in as ...」が出てい
 
 # Part F: Palworld 版からの移行
 
-すでに Palworld 版を運用していた場合の差し替え手順です。新規構築なら読み飛ばしてください。
+すでに Palworld 版を運用していた場合の差し替えです。新規構築なら読み飛ばしてください。
+
+**各マシンでスクリプトを1本実行するだけ**で済みます。手で追いたい場合は末尾の付録に同じ内容の手順があります。
+
+## 順番
+
+サーバー PC が先です。ラズパイ側の最後の疎通確認が、サーバー PC の SSH 受け口が更新済みであることを前提にしています。
+
+### 1. サーバー PC
+
+```bash
+sudo apt install -y git
+git clone https://github.com/ShotaTake/palserver.git ~/palserver
+cd ~/palserver
+sudo bash scripts/setup/migrate-server.sh --dry-run
+```
+
+`--dry-run` は**何も変更せず、実行する内容をすべて表示するだけ**です。この出力をそのまま管理者に送り、確認してもらってから本番を実行します。
+
+```bash
+sudo bash scripts/setup/migrate-server.sh
+```
+
+途中で Valheim のサーバー名・ワールド名・パスワードを聞かれます。事前に用意した値ファイルがあるなら、聞かれずに済みます。
+
+```bash
+sudo bash scripts/setup/migrate-server.sh --values ~/valheim-values.env
+```
+
+値ファイルの雛形は [config/valheim.env.example](../config/valheim.env.example) です。
+
+### 2. ラズパイ
+
+```bash
+sudo apt install -y git python3-venv
+git clone https://github.com/ShotaTake/palserver.git ~/palserver
+cd ~/palserver
+sudo bash scripts/setup/migrate-pi.sh --dry-run
+sudo bash scripts/setup/migrate-pi.sh
+```
+
+Discord トークンも SSH 鍵も**既存の設定から引き継ぐ**ので、入力するものはありません。
+
+### 3. ルーター
+
+UDP 8211 の転送を削除し、UDP 2456-2457 をサーバー PC へ転送します。ここだけは手作業です。
+
+### 4. 確認と片付け
+
+Discord で Part E のチェックリストを流します。全部通ったら、両方のマシンで旧環境を片付けます。
+
+```bash
+sudo bash scripts/setup/cleanup-palworld.sh --dry-run
+sudo bash scripts/setup/cleanup-palworld.sh
+```
+
+## スクリプトが何をするか
+
+| | サーバー PC (`migrate-server.sh`) | ラズパイ (`migrate-pi.sh`) |
+|---|---|---|
+| 旧環境 | 保存して停止 → 最終バックアップ → `disable` → ユニットを退避して `mask` | 旧 Bot を `disable --now` |
+| 導入 | SteamCMD で Valheim、`valheim.env`、ユニット（`KillSignal=SIGINT` を検証） | `gameserver-bot` ユーザー、`/opt/gameserver-ops`、venv |
+| 引き継ぎ | — | SSH 鍵・known_hosts・`bot.env`（4キーだけ書き換え） |
+| 権限 | 制御スクリプト5本、バックアップ先、ufw、sudoers、`authorized_keys` | — |
+| 確認 | 起動 → A2S 応答 → `status`/`players`/`restart` | サービス起動 → SSH で `status` と `command denied` の両方 |
+
+`mask` の前にユニット実体を退避するのは、`systemctl mask` が `/etc/systemd/system/<ユニット名>` に `/dev/null` へのリンクを張る仕組みで、同じパスに実ファイルがあると失敗するためです。
+
+`authorized_keys` の場所は決め打ちせず、`sshd -T` に聞いて実際の参照先を使います（このサーバーは `.ssh/kgy_keys`）。
+
+## 安全のための設計
+
+- **何度実行しても同じ結果**になります。途中で失敗したら、直して頭から再実行できます
+- 置き換えるファイルには必ず `.bak.<日時>` を残します
+- **Palworld のセーブデータとバックアップは削除しません**。`cleanup-palworld.sh` も触りません
+- sudoers と `authorized_keys` は、**中身を全文表示して `yes` を打たせてから**書きます。sudoers は `visudo -c` を通してからでないと適用しません
+- Discord トークンは一度も画面に出しません
+
+途中で止まったときは、出力をそのまま送ってください。
+
+---
+
+# 付録: 手作業で移行する
+
+スクリプトを使わずに手で移行する場合の手順です。スクリプトが途中で失敗したときの参照用でもあります。
 
 **サーバー PC:**
 
@@ -407,7 +491,6 @@ sudo userdel -r palworld-bot
 `/取引` の画像を旧クローンに置いていた場合は、消す前に新しい場所へ移してください。
 
 **ルーター:** UDP 8211 の転送を削除し、UDP 2456-2457 をサーバー PC へ転送します。
-
 ---
 
 # トラブルシューティング
