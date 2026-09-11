@@ -397,9 +397,9 @@ step "SSH の受け口（内容を確認してから書き込みます）"
 CTL_HOME="$(getent passwd "$CTL_USER" | cut -d: -f6)"
 [ -n "$CTL_HOME" ] || CTL_HOME="/home/$CTL_USER"
 
-# sshd can be pointed at a non-default file — this machine uses .ssh/kgy_keys,
-# and assuming authorized_keys is what caused a long "Permission denied
-# (publickey)" hunt. Ask sshd instead of guessing.
+# sshd can be pointed at a non-default file, and assuming authorized_keys is
+# what once caused a long "Permission denied (publickey)" hunt. Ask sshd
+# instead of guessing.
 AKF_SETTING="$(sshd -T 2>/dev/null | awk 'tolower($1)=="authorizedkeysfile"{$1=""; sub(/^ /,""); print; exit}')"
 [ -n "$AKF_SETTING" ] || AKF_SETTING=".ssh/authorized_keys"
 note "sshd の AuthorizedKeysFile: $AKF_SETTING"

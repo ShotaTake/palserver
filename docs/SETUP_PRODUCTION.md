@@ -381,7 +381,7 @@ sudo bash scripts/setup/cleanup-palworld.sh
 
 `mask` の前にユニット実体を退避するのは、`systemctl mask` が `/etc/systemd/system/<ユニット名>` に `/dev/null` へのリンクを張る仕組みで、同じパスに実ファイルがあると失敗するためです。
 
-`authorized_keys` の場所は決め打ちせず、`sshd -T` に聞いて実際の参照先を使います（このサーバーは `.ssh/kgy_keys`）。
+`authorized_keys` の場所は決め打ちせず、`sshd -T` に聞いて実際の参照先を使います。既定以外のファイル名を設定している sshd は珍しくなく、決め打ちで書いて動かなかったことが実際にあります。
 
 ## 安全のための設計
 
