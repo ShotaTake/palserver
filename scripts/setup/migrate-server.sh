@@ -164,7 +164,7 @@ else
   note "$VALHEIM_USER ユーザーは既にあります。"
 fi
 
-VALHEIM_HOME="$(getent passwd "$VALHEIM_USER" | cut -d: -f6)"
+VALHEIM_HOME="$(user_home "$VALHEIM_USER")"
 [ -n "$VALHEIM_HOME" ] || VALHEIM_HOME="/home/$VALHEIM_USER"
 
 run install -d -o "$VALHEIM_USER" -g "$VALHEIM_USER" -m 0755 "$VALHEIM_DIR"
@@ -460,13 +460,13 @@ fi
 
 step "SSH の受け口（内容を確認してから書き込みます）"
 
-CTL_HOME="$(getent passwd "$CTL_USER" | cut -d: -f6)"
+CTL_HOME="$(user_home "$CTL_USER")"
 [ -n "$CTL_HOME" ] || CTL_HOME="/home/$CTL_USER"
 
 # sshd can be pointed at a non-default file, and assuming authorized_keys is
 # what once caused a long "Permission denied (publickey)" hunt. Ask sshd
 # instead of guessing.
-AKF_SETTING="$(sshd -T 2>/dev/null | awk 'tolower($1)=="authorizedkeysfile"{$1=""; sub(/^ /,""); print; exit}')"
+AKF_SETTING="$(sshd -T 2>/dev/null | awk 'tolower($1)=="authorizedkeysfile"{$1=""; sub(/^ /,""); print; exit}' || true)"
 [ -n "$AKF_SETTING" ] || AKF_SETTING=".ssh/authorized_keys"
 note "sshd の AuthorizedKeysFile: $AKF_SETTING"
 

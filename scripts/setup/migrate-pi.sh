@@ -214,7 +214,7 @@ set_env_key() {
 # The game port is decided once, in the repository, so both machines agree
 # without anyone having to remember a number. GAME_PORT is what /server
 # address tells people to connect to.
-if [ -z "$GAME_PORT" ]; then
+if [ -z "$GAME_PORT" ] && [ -r "$REPO_ROOT/config/valheim.env.example" ]; then
   GAME_PORT="$(read_value "$REPO_ROOT/config/valheim.env.example" VALHEIM_PORT)"
 fi
 GAME_PORT="${GAME_PORT:-2456}"

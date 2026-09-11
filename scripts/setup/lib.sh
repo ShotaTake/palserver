@@ -127,6 +127,14 @@ user_exists() {
   id -u "$1" > /dev/null 2>&1
 }
 
+# user_home USER — the home directory, or empty when there is no such user.
+# getent exits 2 for a missing user, which set -e would otherwise take as a
+# fatal error. That happens routinely during --dry-run, where the useradd was
+# printed rather than run.
+user_home() {
+  getent passwd "$1" 2>/dev/null | cut -d: -f6 || true
+}
+
 # Copy a file to <path>.bak.<timestamp> before it is modified in place.
 backup_file() {
   local path="$1"

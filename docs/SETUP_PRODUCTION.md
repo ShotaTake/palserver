@@ -344,8 +344,8 @@ Palworld のサーバー本体は止めなくて構いません。次のスク�
 
 ```bash
 sudo apt install -y git
-git clone https://github.com/ShotaTake/palserver.git ~/palserver
-cd ~/palserver
+# Palworld のときに clone 済みなら pull になる
+if [ -d ~/palserver/.git ]; then cd ~/palserver && git pull --ff-only; else git clone https://github.com/ShotaTake/palserver.git ~/palserver && cd ~/palserver; fi
 sudo bash scripts/setup/migrate-server.sh --dry-run
 ```
 
@@ -367,11 +367,13 @@ sudo bash scripts/setup/migrate-server.sh --values ~/valheim-values.env
 
 ```bash
 sudo apt install -y git python3-venv
-git clone https://github.com/ShotaTake/palserver.git ~/palserver
-cd ~/palserver
+# Palworld のときに clone 済みなら pull になる
+if [ -d ~/palserver/.git ]; then cd ~/palserver && git pull --ff-only; else git clone https://github.com/ShotaTake/palserver.git ~/palserver && cd ~/palserver; fi
 sudo bash scripts/setup/migrate-pi.sh --dry-run
 sudo bash scripts/setup/migrate-pi.sh
 ```
+
+`git pull` がローカルの変更で止まったら、中身はすべて GitHub にあるので取り直すのが早いです: `cd ~ && rm -rf palserver && git clone https://github.com/ShotaTake/palserver.git ~/palserver`
 
 Discord トークンも SSH 鍵も**既存の設定から引き継ぐ**ので、入力するものはありません。
 
