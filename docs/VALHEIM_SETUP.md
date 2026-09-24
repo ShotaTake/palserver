@@ -64,7 +64,7 @@ VALHEIM_NAME=kgyValheim
 VALHEIM_WORLD=kgyWorld
 VALHEIM_PASSWORD=ここに5文字以上
 VALHEIM_PORT=35520
-VALHEIM_PUBLIC=0
+VALHEIM_PUBLIC=1
 VALHEIM_MODIFIERS=-modifier resources most -modifier deathpenalty casual -modifier portals casual
 ```
 
@@ -79,7 +79,8 @@ sudo chmod 640 /etc/valheim/valheim.env
 
 - **パスワードは5文字以上**。**ワールド名を含めることはできません**（含むと起動に失敗します）
 - 値の後ろに `#` コメントを書かないでください（systemd が値の一部として読みます）
-- `VALHEIM_PUBLIC=0` はコミュニティのサーバー一覧に載せない設定です。参加は IP 直接入力になります。グローバル IP が変わる回線ですが、変わるたびに Discord へ新しい接続先が自動投稿されるので実用上は困りません。一覧に載せたい場合は `1` にして、後述のクエリポートも開放してください
+- **`VALHEIM_PUBLIC=1` は必須です。** 一覧公開の可否だけでなく、**Steam のクエリ応答そのもののスイッチ**を兼ねています。`0` にすると A2S が無応答になり、Bot の人数取得・プレイヤー名・presence 表示・無人時の自動シャットダウンがまとめて動かなくなります（実機の 1.0 サーバーで確認）
+- ただし `1` にしても、クエリポートをルーターで転送しなければ一覧には実質載りません。この配備はその状態です。参加は IP 直接入力で、現在の接続先は `/server address` が案内します
 - `VALHEIM_PORT=35520` は Palworld で使っていた番号の流用です。ルーターの転送ルールをそのまま使えます
 - `VALHEIM_MODIFIERS` はワールド修飾子（後述）。空でも構いません
 
@@ -181,7 +182,9 @@ sudo ufw allow 35520:35521/udp
 
 Palworld で同じ番号を転送していたなら、**ルーターは触らなくて済みます**。ただし外部ポートだけ 35520 で内部が 8211 のようなポート変換になっている場合は、内部側も 35520 に直してください。
 
-クエリポート 35521 を開ける必要が無いのは、人数取得が `127.0.0.1` 宛だからです（[scripts/server/valheim-query](../scripts/server/valheim-query)）。外から叩かれる用途は、サーバー一覧に載せる（`VALHEIM_PUBLIC=1`）ときだけです。
+クエリポート 35521 を転送しなくてよいのは、Bot の人数取得が `127.0.0.1` 宛だからです（[scripts/server/valheim-query](../scripts/server/valheim-query)）。外から届く必要があるのは、ゲーム内のサーバー一覧に実際に載せたいときだけです。
+
+`VALHEIM_PUBLIC=1` と一覧公開は別物である点に注意してください。`1` は**クエリ応答を有効にするために必須**（`0` だと人数が取れない）で、実際に一覧へ載るかどうかは 35521 を転送するかどうかで決まります。
 
 ## 6. 起動確認
 
@@ -238,6 +241,8 @@ sudo tar -czf ~/valheim-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
 Bot から `/server stop` した場合は、`scripts/server/gameserver-backup` が停止後に同じ内容を自動で固めます（設置は [SETUP_PRODUCTION.md](SETUP_PRODUCTION.md) の A-5）。手動バックアップが要るのは Bot を使わずに止めたときだけです。
 
 ## 9. アップデート手順
+
+Discord から行う場合は、一度だけ [更新機能の導入](UPDATE_SETUP.md) を行い、以降は Maintainer が `/server update` を実行します。保存・バックアップ・更新・起動確認まで自動で行います。以下は所有者がターミナルで行う場合の手順です。Bot の更新処理と同時には実行しないでください。
 
 **必ず停止してから**行ってください。
 

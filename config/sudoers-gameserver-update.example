@@ -1,0 +1,5 @@
+# Add alongside sudoers-gameserver-control, after visudo -cf validation.
+# The empty argument string forbids extra arguments. No shell or unrestricted
+# SteamCMD command is granted. Keep the helper root-owned and not writable by valheim.
+palbotctl ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block valheim-update.service
+palbotctl ALL=(valheim) NOPASSWD: /usr/local/sbin/valheim-steam-update ""

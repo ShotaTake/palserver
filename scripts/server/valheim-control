@@ -68,6 +68,10 @@ cmd_status() {
   else
     printf 'valheim=stopped\n'
   fi
+  cmd_update_status
+  if [ -x /usr/local/sbin/gameserver-maintenance ]; then
+    /usr/local/sbin/gameserver-maintenance restore-status
+  fi
 }
 
 cmd_start() {
@@ -86,7 +90,7 @@ cmd_shutdown() {
     printf 'stopped\n'
     return 0
   fi
-  sudo -n systemctl stop "$VALHEIM_SERVICE"
+  sudo -n systemctl stop "$VALHEIM_SERVICE" || return 1
   local waited=0
   while _service_active; do
     sleep 2
@@ -97,7 +101,7 @@ cmd_shutdown() {
   done
   if _service_active; then
     printf '%s\n' 'valheim did not stop' >&2
-    exit 1
+    return 1
   fi
   printf 'stopped\n'
 }
@@ -177,12 +181,170 @@ _cpu_temp_millidegrees() {
 }
 
 cmd_backup() {
-  "$GAMESERVER_BACKUP_SCRIPT"
+  if ! "$GAMESERVER_BACKUP_SCRIPT"; then
+    _record_stop backup_failed
+    return 1
+  fi
 }
 
 cmd_poweroff() {
-  sudo -n "$GAMESERVER_POWEROFF_SCRIPT"
+  _record_stop requested
+  if ! sudo -n "$GAMESERVER_POWEROFF_SCRIPT"; then
+    _record_stop poweroff_failed
+    return 1
+  fi
 }
+
+# Shared by the systemd update job and every mutating SSH command. This
+# directory is installed by the operator; never create privileged paths here.
+UPDATE_DIR=/var/lib/gameserver-control
+UPDATE_SERVICE=valheim-update.service
+UPDATE_ID=''
+
+_record_stop() {
+  [ -d "$UPDATE_DIR" ] || return 0
+  local temporary
+  temporary="$(mktemp "$UPDATE_DIR/.stop.XXXXXX")"
+  printf '%s\n' "$1" > "$temporary"
+  mv -f "$temporary" "$UPDATE_DIR/last-stop"
+}
+
+_restore_active() {
+  [ ! -e "$UPDATE_DIR/restore-block" ] || return 0
+  local state
+  state="$(systemctl show -p ActiveState --value valheim-restore.service 2>/dev/null)" || return 1
+  case "$state" in active|activating|deactivating) return 0 ;; *) return 1 ;; esac
+}
+
+_update_active() {
+  local state
+  state="$(systemctl show -p ActiveState --value "$UPDATE_SERVICE" 2>/dev/null)" || return 1
+  case "$state" in active|activating|deactivating) return 0 ;; *) return 1 ;; esac
+}
+
+_operation_lock() {
+  # Older installations can still use existing commands until update support
+  # is installed. The update command itself requires this directory.
+  [ -d "$UPDATE_DIR" ] || return 0
+  exec 9>"$UPDATE_DIR/operation.lock"
+  flock -n 9 || { printf 'operation busy\n' >&2; exit 75; }
+}
+
+_set_update_phase() {
+  local tmp
+  tmp="$(mktemp "$UPDATE_DIR/.update.XXXXXX")"
+  printf 'update_id=%s\nupdate_phase=%s\n' "$UPDATE_ID" "$1" > "$tmp"
+  mv -f "$tmp" "$UPDATE_DIR/update-state"
+}
+
+cmd_update_status() {
+  [ -r "$UPDATE_DIR/update-state" ] || return 0
+  local content phase
+  content="$(cat "$UPDATE_DIR/update-state")"
+  phase="$(printf '%s\n' "$content" | sed -n 's/^update_phase=//p')"
+  # Interrupted downloads must never be reported as still running forever.
+  case "$phase" in
+    queued|checking|stopping|backup|downloading|starting)
+      if ! _update_active; then
+        printf '%s\n' "$content" | sed 's/^update_phase=.*/update_phase=interrupted/'
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' "$content"
+}
+
+cmd_update() {
+  [ -d "$UPDATE_DIR" ] || { printf 'update support not installed\n' >&2; return 1; }
+  [ "$(systemctl show -p LoadState --value "$UPDATE_SERVICE")" = loaded ] || return 1
+  UPDATE_ID="$(date +%s%N)"
+  _set_update_phase queued
+  # systemd owns the worker, so losing SSH or restarting the bot cannot kill it.
+  # Close the inherited lock descriptor in the launcher: the worker takes it.
+  if ! sudo -n systemctl start --no-block "$UPDATE_SERVICE" 9>&-; then
+    _set_update_phase interrupted
+    return 1
+  fi
+  printf 'update_id=%s\nupdate_phase=queued\n' "$UPDATE_ID"
+}
+
+cmd_update_run() {
+  # Only the systemd unit invokes this entry point; the SSH wrapper denies it.
+  [ -d "$UPDATE_DIR" ] || return 1
+  # The requesting SSH process may still hold the lock briefly. Serialize with
+  # it, but never wait indefinitely behind another operation.
+  exec 9>"$UPDATE_DIR/operation.lock"
+  flock -w 60 9 || return 1
+  if _restore_active; then return 75; fi
+  UPDATE_ID="$(sed -n 's/^update_id=//p' "$UPDATE_DIR/update-state")"
+  [[ "$UPDATE_ID" =~ ^[0-9]{1,24}$ ]] || return 1
+  _set_update_phase checking
+  local state roster count
+  state="$(systemctl show -p ActiveState --value "$VALHEIM_SERVICE")"
+  case "$state" in
+    active)
+      if ! roster="$(_query)"; then
+        _set_update_phase refused_players
+        return 1
+      fi
+      count="$(printf '%s\n' "$roster" | sed -n 's/^players=//p')"
+      if [ "$count" != 0 ]; then
+        _set_update_phase refused_players
+        return 1
+      fi
+      ;;
+    inactive|failed) ;;
+    *) _set_update_phase failed_stop; return 1 ;;
+  esac
+
+  _set_update_phase stopping
+  if ! cmd_shutdown; then
+    _set_update_phase failed_stop
+    return 1
+  fi
+  state="$(systemctl show -p ActiveState --value "$VALHEIM_SERVICE")"
+  case "$state" in
+    inactive|failed) ;;
+    *) _set_update_phase failed_stop; return 1 ;;
+  esac
+  _set_update_phase backup
+  if ! cmd_backup; then
+    _set_update_phase failed_backup
+    return 1
+  fi
+  _set_update_phase downloading
+  if ! sudo -n -H -u valheim /usr/local/sbin/valheim-steam-update; then
+    _set_update_phase failed_download
+    return 1
+  fi
+  _set_update_phase starting
+  if ! sudo -n systemctl start "$VALHEIM_SERVICE"; then
+    _set_update_phase failed_start
+    return 1
+  fi
+  # systemd's "active" alone does not mean a world is ready for players.
+  local attempt
+  for attempt in $(seq 1 60); do
+    if _service_active && _query >/dev/null 2>&1; then
+      _set_update_phase succeeded
+      return 0
+    fi
+    sleep 5
+  done
+  _set_update_phase failed_start
+  return 1
+}
+
+# Prevent concurrent mutation even across separate SSH connections or a bot
+# restart. Status/players/metrics remain available throughout the update.
+case "${1:-}" in
+  start|restart|shutdown|backup|poweroff|update)
+    if _update_active || _restore_active; then printf 'maintenance busy\n' >&2; exit 75; fi
+    _operation_lock
+    # Recheck after acquiring the lock to close the enqueue race.
+    if _update_active || _restore_active; then printf 'maintenance busy\n' >&2; exit 75; fi
+    ;;
+esac
 
 case "${1:-}" in
   status) cmd_status ;;
@@ -190,9 +352,13 @@ case "${1:-}" in
   players) cmd_players ;;
   metrics) cmd_metrics ;;
   restart) cmd_restart ;;
-  shutdown) cmd_shutdown ;;
+  shutdown)
+    if ! cmd_shutdown; then _record_stop shutdown_failed; exit 1; fi
+    ;;
   backup) cmd_backup ;;
   poweroff) cmd_poweroff ;;
+  update) cmd_update ;;
+  update-run) cmd_update_run ;;
   *)
     printf '%s\n' 'invalid command' >&2
     exit 64

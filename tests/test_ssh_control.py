@@ -15,6 +15,10 @@ def test_remote_commands_are_a_fixed_enum() -> None:
         "shutdown",
         "backup",
         "poweroff",
+        "update",
+        "diagnose",
+        "backups",
+        "restore",
     }
 
 

@@ -119,7 +119,10 @@ sudo install -m 0755 scripts/server/gameserver-safe-poweroff /usr/local/sbin/gam
 
 ```bash
 sudo install -d -o palbotctl -g palbotctl -m 0750 /var/lib/gameserver-backups
+sudo usermod -aG valheim palbotctl
 ```
+
+2行目も必須です。ワールドは `valheim` のホーム配下にあり、Ubuntu 24.04 の `useradd` はホームを `0750` で作るので、グループに入っていない `palbotctl` は中に入れません。バックアップが `world directory not found` で失敗し、その結果 `/server stop` が電源を切らなくなります。
 
 クエリポートを設定します。`valheim-control` の既定は 2457 なので、**ゲームポートを 35520 にしている以上ここは必須**です。書かないと起動状態は正しく出るのに人数だけ取れません。
 
@@ -297,7 +300,7 @@ journalctl -u gameserver-bot.service -n 20  # 「logged in as ...」が出てい
 
 | 設定 | 内容 |
 |---|---|
-| ポート開放 | **UDP 35520 → サーバー PC** だけ。外部・内部とも同じ番号にすること。クエリポート 35521 は人数取得が loopback 経由なので転送不要（サーバー一覧に載せる場合のみ必要） |
+| ポート開放 | **UDP 35520 → サーバー PC** だけ。外部・内部とも同じ番号にすること。クエリポート 35521 は Bot の人数取得が loopback 経由なので転送不要（ゲーム内の一覧に実際に載せたい場合だけ追加する） |
 | 開放しないもの | SSH(22) / Bot 関連。管理接続は LAN 内だけで行う |
 | DHCP 固定 | サーバー PC と Pi の IP を DHCP 予約で固定しておくと安定する |
 
@@ -529,9 +532,9 @@ sudo userdel -r palworld-bot
 | 症状 | 原因と対処 |
 |---|---|
 | Bot 応答「アプリケーションが応答しませんでした」 | Discord の 3 秒制限に通信遅延で間に合わなかった。**もう一度実行すれば OK** |
-| `/server start` がタイムアウト | WOL が効いていない。A-2 の BIOS 設定（特に ErP）と `ethtool` の `Wake-on: g` を確認。サーバーが Wi-Fi 接続になっていないか確認。冷間起動が遅いだけなら `SERVER_BOOT_TIMEOUT_SECONDS` を伸ばす |
+| `/server start` がタイムアウト | **まず PC の電源が入ったか実物を見る。** 入らないなら WOL が届いていない。**電源ボタン長押しや電源喪失で切ると、NIC がマジックパケット待ちに入らずに眠るので WOL が効かない。** 手で一度起動して `sudo poweroff` で落とし直せば戻る。それでもダメなら A-2 の BIOS 設定（特に ErP）と `ethtool` の `Wake-on: g`。電源が入るのに失敗する場合は SSH 側の問題なので、Pi で `journalctl -u gameserver-bot.service` の `ssh ... exited` 行を見る。冷間起動が遅いだけなら `SERVER_BOOT_TIMEOUT_SECONDS` を伸ばす |
 | SSH が `Permission denied (publickey)` | 鍵も権限も正しいのに通らない場合、sshd が既定以外の `AuthorizedKeysFile` を見ていることがある。`sudo sshd -T` の出力から `authorizedkeysfile` の行を探して実際の参照先を確認する |
-| 「バックアップに失敗したため、サーバーPCの電源は切りません。」 | バックアップ先の権限不足が典型。`ls -ld /var/lib/gameserver-backups` が `palbotctl` 所有か確認（A-5）。※電源が切れないのは安全設計どおり |
+| バックアップ失敗で電源が切れない | `sudo -u palbotctl /usr/local/sbin/gameserver-backup` を実行して実際のエラーを見る。`world directory not found` なら `palbotctl` が `valheim` グループに入っていない（`sudo usermod -aG valheim palbotctl`）。書き込みで失敗するならバックアップ先が `palbotctl` 所有か確認（A-5）。※電源が切れないのは安全設計どおり。**このとき電源ボタン長押しで切らないこと**（WOL が効かなくなる） |
 | 停止のたびにワールドが巻き戻る | `valheim-server.service` に `KillSignal=SIGINT` が無い。VALHEIM_SETUP.md の 4 章 |
 | SSH で `bash\r: No such file or directory` | スクリプトが Windows 改行(CRLF)になっている。`sudo sed -i 's/\r$//' /usr/local/sbin/valheim-*` で修正 |
 | `players` が取れない（状態は出るのに人数だけ空） | `/etc/gameserver-control/control.env` の `VALHEIM_QUERY_PORT` がゲームポート+1（35521）になっているか確認。既定の 2457 のままだとこうなる |

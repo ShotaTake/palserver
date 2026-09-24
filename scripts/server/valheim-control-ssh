@@ -13,6 +13,10 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
   shutdown) exec /usr/local/sbin/valheim-control shutdown ;;
   backup)   exec /usr/local/sbin/valheim-control backup ;;
   poweroff) exec /usr/local/sbin/valheim-control poweroff ;;
+  update)   exec /usr/local/sbin/valheim-control update ;;
+  diagnose) exec /usr/local/sbin/gameserver-maintenance diagnose ;;
+  backups)  exec /usr/local/sbin/gameserver-maintenance backups ;;
+  restore)  exec /usr/local/sbin/gameserver-maintenance restore ;;
   *)
     printf '%s\n' 'command denied' >&2
     exit 64

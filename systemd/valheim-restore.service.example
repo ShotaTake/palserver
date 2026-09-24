@@ -1,0 +1,20 @@
+[Unit]
+Description=Restore a confirmed Valheim world backup
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/
+ExecStart=/usr/local/sbin/gameserver-maintenance restore-run
+TimeoutStartSec=1h
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/gameserver-control /var/lib/gameserver-backups /home/valheim/.config/unity3d/IronGate/Valheim
+NoNewPrivileges=true
+
+# Invoked only on demand. The bot cannot invoke restore-run over SSH.

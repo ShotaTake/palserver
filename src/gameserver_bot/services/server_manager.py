@@ -15,11 +15,22 @@ from enum import Enum, auto
 
 from gameserver_bot.config import BotConfig
 from gameserver_bot.services import ssh_control, wol
+from gameserver_bot.services.maintenance import (
+    BackupEntry,
+    RestorePhase,
+    RestoreReport,
+    parse_backups,
+    parse_diagnose,
+    parse_restore,
+    restore_payload,
+)
 from gameserver_bot.services.ssh_control import RemoteCommand, SshResult
+from gameserver_bot.services.update import UpdatePhase, UpdateReport, parse_update
 
 SshRunner = Callable[[RemoteCommand], Awaitable[SshResult]]
 WolSender = Callable[[], Awaitable[int]]
 Sleeper = Callable[[float], Awaitable[None]]
+RestoreSender = Callable[[BackupEntry], Awaitable[SshResult]]
 
 _BOOT_POLL_INTERVAL_SECONDS = 5.0
 
@@ -44,6 +55,8 @@ class StatusReport:
     max_players: int | None
     checked_at: datetime
     player_names: tuple[str, ...] = ()
+    update: UpdateReport | None = None
+    restore: RestoreReport | None = None
 
 
 class StartOutcome(Enum):
@@ -52,6 +65,15 @@ class StartOutcome(Enum):
     BUSY = auto()
     BOOT_TIMEOUT = auto()
     START_FAILED = auto()
+
+
+class UpdateOutcome(Enum):
+    ACCEPTED = auto()
+    BUSY = auto()
+    BOOT_TIMEOUT = auto()
+    REFUSED_PLAYERS = auto()
+    FAILED = auto()
+    UNKNOWN = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +95,15 @@ class LoadReport:
     def has_game_metrics(self) -> bool:
         """True when the game server answered; a stopped one reports OS data only."""
         return self.players is not None
+
+
+class RestoreOutcome(Enum):
+    ACCEPTED = auto()
+    BUSY = auto()
+    UNREACHABLE = auto()
+    REFUSED_PLAYERS = auto()
+    FAILED = auto()
+    UNKNOWN = auto()
 
 
 class RestartOutcome(Enum):
@@ -178,6 +209,7 @@ class ServerManager:
         wol_sender: WolSender | None = None,
         sleep: Sleeper | None = None,
         now: Callable[[], datetime] | None = None,
+        restore_sender: RestoreSender | None = None,
     ) -> None:
         self._config = config
         self._ssh_runner: SshRunner = ssh_runner if ssh_runner is not None else self._run_ssh
@@ -185,6 +217,9 @@ class ServerManager:
         self._sleep: Sleeper = sleep if sleep is not None else self._asyncio_sleep
         self._now: Callable[[], datetime] = now if now is not None else datetime.now
         self._lock = asyncio.Lock()
+        self.requested_update_id: str | None = None
+        self.requested_restore_id: str | None = None
+        self._restore_sender = restore_sender if restore_sender is not None else self._send_restore
 
     @staticmethod
     async def _asyncio_sleep(seconds: float) -> None:
@@ -226,14 +261,110 @@ class ServerManager:
         elif game is GameState.STOPPED:
             players = 0
         return StatusReport(
-            PcState.ONLINE, game, players, max_players, checked_at, player_names
+            PcState.ONLINE, game, players, max_players, checked_at, player_names,
+            parse_update(result.stdout), parse_restore(result.stdout),
         )
+
+    async def _send_restore(self, entry: BackupEntry) -> SshResult:
+        return await ssh_control.run_remote(
+            self._config, RemoteCommand.RESTORE, input_data=restore_payload(entry)
+        )
+
+    async def backups(self) -> tuple[BackupEntry, ...] | None:
+        result = await self._ssh_runner(RemoteCommand.BACKUPS)
+        return parse_backups(result.stdout) if result.ok else None
+
+    async def diagnose(self) -> dict[str, str]:
+        result = await self._ssh_runner(RemoteCommand.DIAGNOSE)
+        if result.connection_failed:
+            return {"ssh": "unreachable"}
+        if not result.ok:
+            return {"ssh": "ok", "diagnose": "unavailable"}
+        return {"ssh": "ok", **parse_diagnose(result.stdout)}
+
+    async def restore(self, entry: BackupEntry) -> RestoreOutcome:
+        restore_payload(entry)
+        if self._lock.locked():
+            return RestoreOutcome.BUSY
+        async with self._lock:
+            probe = await self._ssh_runner(RemoteCommand.STATUS)
+            if probe.connection_failed:
+                return RestoreOutcome.UNREACHABLE
+            if not probe.ok:
+                return RestoreOutcome.FAILED
+            update, restore = parse_update(probe.stdout), parse_restore(probe.stdout)
+            if ((update is not None and update.phase.active)
+                    or (restore is not None and restore.phase.active)):
+                return RestoreOutcome.BUSY
+            state = _parse_game_state(probe.stdout)
+            if state is GameState.UNKNOWN:
+                return RestoreOutcome.FAILED
+            if state is GameState.RUNNING:
+                result = await self._ssh_runner(RemoteCommand.PLAYERS)
+                players, _ = _parse_players(result.stdout) if result.ok else (None, None)
+                if players != 0:
+                    return RestoreOutcome.REFUSED_PLAYERS
+            result = await self._restore_sender(entry)
+            if result.connection_failed:
+                return RestoreOutcome.UNKNOWN
+            if result.exit_code == 75:
+                return RestoreOutcome.BUSY
+            progress = parse_restore(result.stdout)
+            if not result.ok or progress is None or progress.phase is not RestorePhase.QUEUED:
+                return RestoreOutcome.FAILED
+            self.requested_restore_id = progress.job_id
+            return RestoreOutcome.ACCEPTED
+
+    async def update(self) -> UpdateOutcome:
+        """Wake the PC if needed, then enqueue the fixed server-side update job."""
+        if self._lock.locked():
+            return UpdateOutcome.BUSY
+        async with self._lock:
+            probe = await self._ssh_runner(RemoteCommand.STATUS)
+            if probe.connection_failed:
+                await self._wol_sender()
+                if not await self._wait_for_ssh():
+                    return UpdateOutcome.BOOT_TIMEOUT
+                probe = await self._ssh_runner(RemoteCommand.STATUS)
+            if not probe.ok:
+                return UpdateOutcome.FAILED
+            progress = parse_update(probe.stdout)
+            if progress is not None and progress.phase.active:
+                return UpdateOutcome.BUSY
+            restoring = parse_restore(probe.stdout)
+            if restoring is not None and restoring.phase.active:
+                return UpdateOutcome.BUSY
+            state = _parse_game_state(probe.stdout)
+            if state is GameState.UNKNOWN:
+                return UpdateOutcome.FAILED
+            if state is GameState.RUNNING:
+                result = await self._ssh_runner(RemoteCommand.PLAYERS)
+                players, _ = _parse_players(result.stdout) if result.ok else (None, None)
+                if players != 0:
+                    return UpdateOutcome.REFUSED_PLAYERS
+            result = await self._ssh_runner(RemoteCommand.UPDATE)
+            if result.exit_code == 75:
+                return UpdateOutcome.BUSY
+            # A lost acknowledgement does not mean the job failed to start.
+            if result.connection_failed:
+                return UpdateOutcome.UNKNOWN
+            progress = parse_update(result.stdout)
+            if not result.ok or progress is None or progress.phase is not UpdatePhase.QUEUED:
+                return UpdateOutcome.FAILED
+            self.requested_update_id = progress.job_id
+            return UpdateOutcome.ACCEPTED
 
     async def start(self) -> StartOutcome:
         if self._lock.locked():
             return StartOutcome.BUSY
         async with self._lock:
             probe = await self._ssh_runner(RemoteCommand.STATUS)
+            progress = parse_update(probe.stdout)
+            if progress is not None and progress.phase.active:
+                return StartOutcome.BUSY
+            restoring = parse_restore(probe.stdout)
+            if restoring is not None and restoring.phase.active:
+                return StartOutcome.BUSY
             if probe.ok and _parse_game_state(probe.stdout) is GameState.RUNNING:
                 return StartOutcome.ALREADY_RUNNING
             if probe.connection_failed:
@@ -241,6 +372,8 @@ class ServerManager:
                 if not await self._wait_for_ssh():
                     return StartOutcome.BOOT_TIMEOUT
             start_result = await self._ssh_runner(RemoteCommand.START)
+            if start_result.exit_code == 75:
+                return StartOutcome.BUSY
             if not start_result.ok:
                 return StartOutcome.START_FAILED
             verify = await self._ssh_runner(RemoteCommand.STATUS)
@@ -276,6 +409,8 @@ class ServerManager:
             if probe.connection_failed:
                 return RestartOutcome.UNREACHABLE
             result = await self._ssh_runner(RemoteCommand.RESTART)
+            if result.exit_code == 75:
+                return RestartOutcome.BUSY
             if not result.ok:
                 return RestartOutcome.RESTART_FAILED
             verify = await self._ssh_runner(RemoteCommand.STATUS)
@@ -312,13 +447,19 @@ class ServerManager:
                 # Unknown player count is treated as "someone may be connected".
                 return StopResult(StopOutcome.REFUSED_PLAYERS_CONNECTED, players=players)
             shutdown_result = await self._ssh_runner(RemoteCommand.SHUTDOWN)
+            if shutdown_result.exit_code == 75:
+                return StopResult(StopOutcome.BUSY, players=players)
             if not shutdown_result.ok:
                 return StopResult(StopOutcome.SHUTDOWN_FAILED, players=players)
             backup_result = await self._ssh_runner(RemoteCommand.BACKUP)
+            if backup_result.exit_code == 75:
+                return StopResult(StopOutcome.BUSY, players=players)
             if not backup_result.ok:
                 # Never power off when the backup did not succeed.
                 return StopResult(StopOutcome.BACKUP_FAILED, players=players)
             poweroff_result = await self._ssh_runner(RemoteCommand.POWEROFF)
+            if poweroff_result.exit_code == 75:
+                return StopResult(StopOutcome.BUSY, players=players)
             # The connection dropping mid-poweroff means the machine went down.
             if poweroff_result.ok or poweroff_result.connection_failed:
                 return StopResult(StopOutcome.STOPPED, players=players)

@@ -1,0 +1,508 @@
+#!/usr/bin/python3
+"""Fixed maintenance operations; no arbitrary paths or commands from Discord.
+
+Read/list/enqueue run as palbotctl. Only systemd invokes restore-run as root.
+The root worker accepts a validated archive basename and metadata fingerprint.
+"""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+
+WORLD = Path("/home/valheim/.config/unity3d/IronGate/Valheim/worlds_local")
+WORLD_ENV = Path("/etc/valheim/valheim.env")
+BACKUPS = Path("/var/lib/gameserver-backups")
+STATE = Path("/var/lib/gameserver-control")
+SERVICE = "valheim-server.service"
+RESTORE_SERVICE = "valheim-restore.service"
+UPDATE_SERVICE = "valheim-update.service"
+ID_RE = re.compile(r"valheim-(?:world|pre-restore)-[0-9]{8}-[0-9]{6}(?:-[0-9]{1,20})?\.tar\.gz")
+ACTIVE = {"active", "activating", "deactivating"}
+PHASES = {"queued", "checking", "validating", "stopping", "backup", "restoring", "starting"}
+
+
+def run(*args, timeout=20):
+    return subprocess.run(  # noqa: S603 - all callers use fixed executable/argument lists
+        args, stdin=subprocess.DEVNULL, capture_output=True,
+        text=True, timeout=timeout, check=False,
+    )
+
+
+def service_state(service):
+    try:
+        result = run("/usr/bin/systemctl", "show", "-p", "ActiveState", "--value", service,
+                     timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def safe_directory(path):
+    # Reject symlinked ancestors, including a swapped backup/world directory.
+    if not path.is_absolute() or path.resolve() != path or not path.is_dir():
+        raise ValueError("unsafe or missing directory")
+
+
+def atomic_json(path, value):
+    fd, temporary = tempfile.mkstemp(prefix=".maintenance-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o644)  # Contains only validated IDs and fixed phases.
+        os.replace(temporary, path)
+        sync_directory(path.parent)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def sync_directory(path):
+    if os.name == "nt":  # Only the isolated filesystem tests run on Windows.
+        return
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def read_json(path):
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("not a regular file")
+        data = stream.read(4097)
+    if len(data) > 4096:
+        raise ValueError("oversized state")
+    value = json.loads(data)
+    if not isinstance(value, dict):
+        raise ValueError("invalid state")
+    return value
+
+
+@contextmanager
+def operation_lock(wait=False):
+    import fcntl
+
+    safe_directory(STATE)
+    fd = os.open(STATE / "operation.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("invalid lock file")
+        deadline = time.monotonic() + (60 if wait else 0)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
+        yield
+    finally:
+        os.close(fd)
+
+
+def fingerprint(info):
+    raw = f"{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}:{info.st_ctime_ns}"
+    return hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+def backup_list():
+    safe_directory(BACKUPS)
+    entries = []
+    for path in BACKUPS.iterdir():
+        if not ID_RE.fullmatch(path.name):
+            continue
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size <= 0:
+                continue
+            entries.append({"name": path.name, "size": info.st_size,
+                            "modified": int(info.st_mtime), "fingerprint": fingerprint(info)})
+        except OSError:
+            continue
+    return sorted(entries, key=lambda entry: (entry["modified"], entry["name"]), reverse=True)[:20]
+
+
+def validate_request(value):
+    if (not isinstance(value, dict) or set(value) != {"name", "fingerprint"}
+            or not isinstance(value["name"], str) or not ID_RE.fullmatch(value["name"])
+            or not isinstance(value["fingerprint"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["fingerprint"])):
+        raise ValueError("invalid restore selection")
+    return value
+
+
+def phase(job_id, value):
+    atomic_json(STATE / "restore-state", {"id": job_id, "phase": value})
+
+
+def restore_status():
+    try:
+        value = read_json(STATE / "restore-state")
+        job_id, current = value.get("id", ""), value.get("phase", "")
+        if not isinstance(job_id, str) or not re.fullmatch(r"[0-9]{1,24}", job_id):
+            return
+        if not isinstance(current, str) or not re.fullmatch(r"[a-z_]{1,32}", current):
+            return
+        if current in PHASES and service_state(RESTORE_SERVICE) not in ACTIVE:
+            current = "interrupted"
+        print(f"restore_id={job_id}\nrestore_phase={current}")
+    except (OSError, ValueError):
+        return
+
+
+def request_restore(value):
+    value = validate_request(value)
+    with operation_lock():
+        if (service_state(UPDATE_SERVICE) in ACTIVE or service_state(RESTORE_SERVICE) in ACTIVE
+                or (STATE / "restore-block").exists()):
+            raise BlockingIOError("maintenance busy")
+        if not any(entry["name"] == value["name"] and entry["fingerprint"] == value["fingerprint"]
+                   for entry in backup_list()):
+            raise ValueError("selection changed")
+        job_id = str(time.time_ns())
+        atomic_json(STATE / "restore-request", {**value, "id": job_id})
+        phase(job_id, "queued")
+        result = run("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", "--no-block",
+                     RESTORE_SERVICE)
+        if result.returncode:
+            phase(job_id, "interrupted")
+            raise ValueError("could not enqueue restore")
+        print(f"restore_id={job_id}\nrestore_phase=queued")
+
+
+def configured_world():
+    # Read only the world-name setting into the result; never emit environment
+    # contents (the same file also holds the game's password).
+    values = []
+    with WORLD_ENV.open(encoding="utf-8") as stream:
+        for line in stream:
+            key, separator, value = line.strip().partition("=")
+            if separator and key == "VALHEIM_WORLD":
+                values = shlex.split(value)
+    if (len(values) != 1 or not values[0] or len(values[0]) > 128
+            or any(character in values[0] for character in "/\\\r\n\x00")):
+        raise ValueError("invalid world setting")
+    return values[0]
+
+
+def archive_members(archive, require_world=True):
+    members, names, total = [], set(), 0
+    for member in archive:
+        name = PurePosixPath(member.name)
+        if (not member.name or "\\" in member.name or ":" in member.name or name.is_absolute()
+                or ".." in name.parts or not name.parts or name.parts[0] != WORLD.name
+                or not (member.isfile() or member.isdir()) or member.name in names
+                or member.size < 0 or len(members) >= 100000):
+            raise ValueError("unsafe archive entry")
+        if len(name.parts) == 1 and not member.isdir():
+            raise ValueError("world root is not a directory")
+        normalized = str(name)
+        if normalized in names:
+            raise ValueError("duplicate archive entry")
+        names.add(normalized)
+        members.append(member)
+        total += member.size
+        if total > 512 * 1024**3:
+            raise ValueError("archive too large")
+    if not any(member.isfile() for member in members):
+        raise ValueError("empty world")
+    if not require_world:
+        return members, total
+    # Match the configured world, even when its current metadata is damaged or
+    # missing. Do not start the game against an unrelated archive as a new world.
+    world_name = configured_world()
+    required = {world_name + ".fwl"}
+    present = {PurePosixPath(member.name).name for member in members
+               if member.isfile() and len(PurePosixPath(member.name).parts) == 2}
+    if not required or not required <= present:
+        raise ValueError("world metadata mismatch")
+    if any(item.isfile() and PurePosixPath(item.name).name in required and item.size == 0
+           for item in members):
+        raise ValueError("empty metadata")
+    database = world_name + ".db"
+    if not any(item.isfile() and item.size > 0 and (
+        str(PurePosixPath(item.name)) == f"{WORLD.name}/{database}"
+        or str(PurePosixPath(item.name)).startswith(f"{WORLD.name}/{database}/")
+    ) for item in members):
+        raise ValueError("missing world database")
+    return members, total
+
+
+def extract_checked(archive, members, staging):
+    # Manual extraction intentionally never uses tarfile.extract/extractall.
+    for member in members:
+        target = staging.joinpath(*PurePosixPath(member.name).parts)
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True, mode=0o750)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+        with archive.extractfile(member) as source, target.open("xb") as destination:
+            shutil.copyfileobj(source, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.chmod(target, 0o640)
+
+
+def prepare_archive(selection, staging):
+    safe_directory(BACKUPS)
+    safe_directory(WORLD)
+    fd = os.open(BACKUPS / selection["name"], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or fingerprint(info) != selection["fingerprint"]):
+            raise ValueError("backup changed")
+        # Pin a private copy so rotation or a changed source cannot alter the
+        # validated archive during the eventual world replacement.
+        pinned = staging / "selected.tar.gz"
+        if shutil.disk_usage(staging).free < info.st_size + 1024**3:
+            raise ValueError("insufficient space")
+        with pinned.open("xb") as destination:
+            shutil.copyfileobj(source, destination)
+        if fingerprint(os.fstat(source.fileno())) != selection["fingerprint"]:
+            raise ValueError("backup changed while copying")
+    # Read through the gzip footer so truncated/corrupt streams cannot pass
+    # simply because tar reached its end-of-archive blocks first.
+    with gzip.open(pinned, "rb") as stream:
+        expanded = 0
+        while block := stream.read(1024 * 1024):
+            expanded += len(block)
+            if expanded > 512 * 1024**3:
+                raise ValueError("archive too large")
+    with tarfile.open(pinned, "r:gz") as archive:
+        members, total = archive_members(archive)
+        if shutil.disk_usage(staging).free < total + 1024**3:
+            raise ValueError("insufficient extraction space")
+        extract_checked(archive, members, staging)
+    pinned.unlink()
+
+
+def safety_backup(job_id):
+    safe_directory(WORLD)
+    safe_directory(BACKUPS)
+    paths = [WORLD, *WORLD.rglob("*")]
+    if any(not (stat.S_ISREG(path.lstat().st_mode) or stat.S_ISDIR(path.lstat().st_mode))
+           for path in paths):
+        raise ValueError("unsupported world file type")
+    size = sum(path.stat().st_size for path in paths if path.is_file())
+    if shutil.disk_usage(BACKUPS).free < size + 1024**3:
+        raise ValueError("insufficient backup space")
+    name = f"valheim-pre-restore-{time.strftime('%Y%m%d-%H%M%S')}-{job_id}.tar.gz"
+    target = BACKUPS / name
+    partial = target.with_suffix(".partial")
+    with tarfile.open(partial, "x:gz", dereference=False) as archive:
+        for path in paths:
+            archive.add(path, arcname=str(Path(WORLD.name) / path.relative_to(WORLD)),
+                        recursive=False)
+    with tarfile.open(partial, "r:gz") as archive:
+        members, _ = archive_members(archive, require_world=False)
+        for member in members:
+            if member.isfile():
+                with archive.extractfile(member) as stream:
+                    while stream.read(1024 * 1024):
+                        pass
+    # Readable by the controller; never pruned by ordinary world-backup retention.
+    os.chmod(partial, 0o644)
+    with partial.open("r+b") as stream:
+        os.fsync(stream.fileno())
+    os.replace(partial, target)
+    sync_directory(BACKUPS)
+    return target
+
+
+def assign_world_owner(path):
+    import pwd
+
+    account = pwd.getpwnam("valheim")
+    for item in [path, *path.rglob("*")]:
+        os.chown(item, account.pw_uid, account.pw_gid)
+        os.chmod(item, 0o750 if item.is_dir() else 0o640)
+
+
+def switch_world(staging, job_id):
+    old = WORLD.parent / f".before-restore-{job_id}"
+    replacement = staging / WORLD.name
+    assign_world_owner(replacement)
+    # A persistent inhibit marker protects the rename gap even after power loss.
+    marker = STATE / "restore-block"
+    atomic_json(marker, {"id": job_id})
+    WORLD.rename(old)
+    sync_directory(WORLD.parent)
+    try:
+        replacement.rename(WORLD)
+        sync_directory(WORLD.parent)
+    except BaseException:
+        old.rename(WORLD)
+        sync_directory(WORLD.parent)
+        marker.unlink()
+        sync_directory(STATE)
+        raise
+    # Keep the old directory as an additional recovery copy; do not delete it.
+    marker.unlink()
+    sync_directory(STATE)
+
+
+def empty_or_stopped():
+    state = service_state(SERVICE)
+    if state in {"inactive", "failed"}:
+        return True
+    if state != "active":
+        return False
+    result = run("/usr/local/sbin/valheim-control", "players")
+    counts = [line[8:] for line in result.stdout.splitlines() if line.startswith("players=")]
+    return result.returncode == 0 and counts == ["0"]
+
+
+def restore_worker():
+    with operation_lock(wait=True):
+        request = read_json(STATE / "restore-request")
+        job_id = request.pop("id", "")
+        if not isinstance(job_id, str) or not re.fullmatch(r"[0-9]{1,24}", job_id):
+            raise ValueError("invalid job")
+        selection = validate_request(request)
+        if (STATE / "restore-block").exists() or service_state(UPDATE_SERVICE) in ACTIVE:
+            phase(job_id, "interrupted")
+            return 1
+        stage = "checking"
+        try:
+            phase(job_id, stage)
+            if not empty_or_stopped():
+                phase(job_id, "refused_players")
+                return 1
+            stage = "validating"
+            phase(job_id, stage)
+            safe_directory(WORLD)
+            with tempfile.TemporaryDirectory(prefix=".restore-", dir=WORLD.parent) as temporary:
+                staging = Path(temporary)
+                prepare_archive(selection, staging)
+                # The validation may take time. Check players again just before stop.
+                if not empty_or_stopped():
+                    phase(job_id, "refused_players")
+                    return 1
+                stage = "stopping"
+                phase(job_id, stage)
+                stopped = run("/usr/bin/systemctl", "stop", SERVICE, timeout=180)
+                if stopped.returncode or service_state(SERVICE) not in {"inactive", "failed"}:
+                    raise ValueError("stop failed")
+                stage = "backup"
+                phase(job_id, stage)
+                safety_backup(job_id)
+                stage = "restoring"
+                phase(job_id, stage)
+                switch_world(staging, job_id)
+            stage = "starting"
+            phase(job_id, stage)
+            if run("/usr/bin/systemctl", "start", SERVICE).returncode:
+                raise ValueError("start failed")
+            for _ in range(60):
+                if (service_state(SERVICE) == "active"
+                        and run("/usr/local/sbin/valheim-control", "players").returncode == 0):
+                    phase(job_id, "succeeded")
+                    return 0
+                time.sleep(5)
+            raise ValueError("game not ready")
+        except Exception as error:
+            failure = {"checking": "refused_players", "validating": "invalid_backup",
+                       "stopping": "failed_stop", "backup": "failed_backup",
+                       "restoring": "failed_restore", "starting": "failed_start"}[stage]
+            phase(job_id, failure)
+            print(f"restore failed at {stage}: {type(error).__name__}", file=sys.stderr)
+            return 1
+
+
+def directory_check(path, writable=False):
+    try:
+        info = path.stat()
+        if not stat.S_ISDIR(info.st_mode):
+            return "missing"
+        mode = os.R_OK | os.X_OK | (os.W_OK if writable else 0)
+        return "ok" if os.access(path, mode) else "denied"
+    except PermissionError:
+        return "denied"
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unknown"
+
+
+def diagnose():
+    checks = {}
+    state = service_state(SERVICE)
+    checks["game"] = "running" if state == "active" else (
+        "stopped" if state == "inactive" else "failed" if state == "failed" else "unknown")
+    checks["query"] = "not_needed"
+    if state == "active":
+        try:
+            result = run("/usr/local/sbin/valheim-control", "players", timeout=5)
+            checks["query"] = "ok" if result.returncode == 0 else "unavailable"
+        except (OSError, subprocess.TimeoutExpired):
+            checks["query"] = "unavailable"
+    checks["world"] = directory_check(WORLD)
+    checks["backup_dir"] = directory_check(BACKUPS, writable=True)
+    for key, path in (("world_space", WORLD), ("backup_space", BACKUPS)):
+        try:
+            checks[key] = "low" if shutil.disk_usage(path).free < 1024**3 else "ok"
+        except OSError:
+            checks[key] = "unknown"
+    checks["restore_block"] = "required" if (STATE / "restore-block").exists() else "clear"
+    for key, service in (("update", UPDATE_SERVICE), ("restore", RESTORE_SERVICE)):
+        value = service_state(service)
+        checks[key] = "running" if value in ACTIVE else "failed" if value == "failed" else "idle"
+    try:
+        last = (STATE / "last-stop").read_text(encoding="ascii").strip()
+        if last in {"requested", "shutdown_failed", "backup_failed", "poweroff_failed"}:
+            checks["last_stop"] = last
+    except (OSError, ValueError):
+        pass
+    print(json.dumps({"checks": checks}))
+
+
+def main():
+    if len(sys.argv) != 2:
+        return 64
+    command = sys.argv[1]
+    try:
+        if command == "backups":
+            print(json.dumps({"backups": backup_list()}))
+        elif command == "diagnose":
+            diagnose()
+        elif command == "restore-status":
+            restore_status()
+        elif command == "restore":
+            data = sys.stdin.buffer.read(1025)
+            if len(data) > 1024:
+                return 64
+            request_restore(json.loads(data))
+        elif command == "restore-run" and os.geteuid() == 0:
+            return restore_worker()
+        else:
+            return 64
+    except BlockingIOError:
+        return 75
+    except Exception as error:
+        print(f"maintenance failed: {type(error).__name__}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

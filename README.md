@@ -8,10 +8,15 @@ Discord から Valheim 専用サーバーを操作する小規模プロジェク
 
 | コマンド | 権限 | 内容 |
 |---|---|---|
+| `/server help` | 全員（指定チャンネル） | 自分のロールで使えるコマンドと使い方を、自分だけに表示 |
 | `/server status` | Player | サーバー PC とゲームの状態、接続人数とプレイヤー名 |
 | `/server start` | Player | WOL で PC を起動し、ゲームを立ち上げる |
 | `/server stop` | Player | 保存 → 停止 → バックアップ → PC の電源オフ（接続者がいると拒否。Maintainer は `force:True` で強制可） |
 | `/server restart` | Maintainer | ゲームだけ再起動（PC は落とさない） |
+| `/server update` | Maintainer | 無人を確認 → 保存・停止 → バックアップ → 更新 → ゲーム起動（PC がオフなら WOL） |
+| `/server diagnose` | Maintainer | 接続・ゲーム応答・空き容量・アクセス権・停止や復元の状態を診断 |
+| `/server backups` | Maintainer | バックアップ一覧（日時・容量、新しい順に最大20件） |
+| `/server restore` | Maintainer | 一覧から選択・確認 → 現状バックアップ → ワールド復元 → ゲーム起動 |
 | `/server address` | Player | 今の接続先（グローバル IP:ポート）を表示 |
 | `/server load` | Player | サーバー PC の負荷（接続人数・稼働時間・CPU・メモリ・ディスク・温度） |
 | `/取引` | 全員 | ランダムで画像を1枚渡す（おまけ） |
@@ -47,8 +52,11 @@ Linux Server PC: Valheim + systemd + backup（普段は電源オフ）
 
 ## セットアップ
 
+- **[docs/DEPLOY_UPDATE.md](docs/DEPLOY_UPDATE.md)** — 既存環境への追加コマンドの反映手順（Pi・サーバー PC 別、確認・トラブル対応）
 - **[docs/VALHEIM_SETUP.md](docs/VALHEIM_SETUP.md)** — サーバー PC に Valheim を構築する手順（SteamCMD、systemd、ポート、バックアップ）
 - **[docs/SETUP_PRODUCTION.md](docs/SETUP_PRODUCTION.md)** — Bot 側（Raspberry Pi / Discord / ルーター）の構築と動作確認
+- **[docs/UPDATE_SETUP.md](docs/UPDATE_SETUP.md)** — Discord からゲームを更新するための初回導入
+- **[docs/MAINTENANCE_SETUP.md](docs/MAINTENANCE_SETUP.md)** — 診断・バックアップ一覧・復元の導入と運用
 
 Palworld 版から移行する場合は、各マシンでスクリプトを1本実行するだけです。
 

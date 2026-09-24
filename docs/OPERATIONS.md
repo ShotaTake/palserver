@@ -20,6 +20,8 @@ git push origin main
 
 ## 本番反映
 
+追加した更新・診断・バックアップ一覧・復元・ヘルプを既存環境へ反映する場合は、[本番反映手順書](DEPLOY_UPDATE.md) に沿って作業する。Bot だけを更新する手順も同じ手順書に記載している。
+
 ### Bot（Raspberry Pi）
 
 ```bash
@@ -62,7 +64,11 @@ sudoers・authorized_keys・ファイアウォールは自動で書き換えな�
 
 ## ゲーム本体の更新
 
-停止してから更新する。手順は [VALHEIM_SETUP.md](VALHEIM_SETUP.md) の「アップデート手順」。
+診断・バックアップ一覧・ワールド復元は [MAINTENANCE_SETUP.md](MAINTENANCE_SETUP.md) を参照してください。復元には対象選択と確認があり、成功後はゲームを起動します。
+
+通常は Maintainer が Discord で `/server update` を実行する。初回だけ [UPDATE_SETUP.md](UPDATE_SETUP.md) の導入が必要。進行と直近の結果は `/server status` で確認する。
+
+手動の場合は停止してから更新する。手順は [VALHEIM_SETUP.md](VALHEIM_SETUP.md) の「アップデート手順」。Bot の更新と同時には実行しない。
 
 ## 安定版
 

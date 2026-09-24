@@ -14,10 +14,13 @@ The number of players is not fixed. Do not hardcode a player list or a fixed pla
 
 Implemented commands:
 
+- `/server help` — role-aware command guide, ephemeral; no role required in the configured guild/channel
 - `/server status` — PC and game state, player count and names
 - `/server start` — WOL the PC, then start the game
 - `/server stop` — save, back up, then power the PC off (refuses while players are connected; Maintainer can force)
 - `/server restart` — restart only the game service (Maintainer only)
+- `/server update` — wake if needed, save/stop, back up, update, start and verify (Maintainer only)
+- `/server diagnose`, `/server backups`, `/server restore` — diagnostics, archive listing, confirmed restore (Maintainer only)
 - `/server address` — the current global IP and game port
 - `/server load` — machine load: players, uptime, CPU, memory, disk, temperature
 - `/取引` — a joke command that hands out a random image
@@ -28,20 +31,22 @@ Setup scripts under `scripts/setup/` are in scope: the machines are operated
 remotely by someone with little time, so migration and installation are meant
 to be one command per machine.
 
-Do not add Docker, a Web UI, RCON, or in-bot update management unless
-explicitly requested.
+Do not add Docker, a Web UI, RCON, or arbitrary terminal access unless
+explicitly requested. Updates use only the fixed server-side systemd job.
 
 ## Security rules
 
 1. Never execute user-supplied strings through a shell.
 2. Never use `shell=True`.
 3. Never implement arbitrary commands, file access, or SSH commands.
-4. Validate Discord guild ID, channel ID, and role IDs.
+4. Validate Discord guild ID, channel ID, and role IDs. Help needs only guild/channel validation and uses roles to filter its guide.
 5. Maintainer role implies Player permissions.
 6. Use a lock for start/stop/restart operations.
 7. SSH operations must use a fixed enum. Adding a command means adding it to
    `RemoteCommand`, to the server-side control script, and to the forced-command
    wrapper — never by passing a string through.
+   Restore sends a validated archive ID/fingerprint as JSON on stdin to the
+   fixed `restore` command, never as SSH command arguments. No arbitrary paths.
 8. Do not commit, read, print, or log secrets.
 9. Do not expose raw exceptions or command output to Discord.
 10. Do not open SSH or management APIs to the Internet.
@@ -62,6 +67,9 @@ explicitly requested.
 - `services/ssh_control.py`: fixed remote commands only
 - `services/server_manager.py`: orchestration and the operation lock
 - `services/monitor.py`: background polling — notifications, presence, idle shutdown
+- `services/update.py`: validated update phases and fixed progress messages
+- `services/maintenance.py`, `maintenance_ui.py`: validated maintenance data and confirmation UI
+- `scripts/server/gameserver-maintenance`: fixed diagnostics/listing and independent restore worker
 - `services/public_ip.py`: outbound lookup of the current global address
 - `scripts/server/`: server-side fixed control script, A2S query, backup, poweroff
 - `scripts/setup/`: one-command migration/installation, run by hand as root
@@ -78,6 +86,11 @@ game only through the fixed SSH commands.
 - The dedicated server needs `SteamAppId=892970` (the game's id), not the
   server's app id 896660.
 - Valheim publishes no server FPS, so machine load is judged from OS figures.
+- `-public 1` is required, and not for the reason the name suggests: with
+  `-public 0` the Steam query responder never answers, so the player count,
+  the names, the presence text and the idle auto-shutdown all stop working.
+  Whether the server actually appears in the browser is a separate question,
+  decided by forwarding the query port.
 
 ## Player management
 

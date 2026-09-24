@@ -17,12 +17,15 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from gameserver_bot.config import BotConfig
+from gameserver_bot.services.maintenance import RESTORE_MESSAGES, RestoreReport
 from gameserver_bot.services.server_manager import (
     GameState,
+    PcState,
     ServerManager,
     StatusReport,
     StopOutcome,
 )
+from gameserver_bot.services.update import UPDATE_MESSAGES, UpdateReport
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,10 @@ class ServerMonitor:
         self._known_players: frozenset[str] = frozenset()
         self._players_tracked = False
         self._public_ip: str | None = None
+        self._last_update: UpdateReport | None = None
+        self._update_baselined = False
+        self._last_restore: RestoreReport | None = None
+        self._restore_baselined = False
         # Start due so the first tick establishes the baseline address.
         self._seconds_since_ip_check = float("inf")
 
@@ -80,6 +87,8 @@ class ServerMonitor:
         # Refresh the address first so an "opened" notice can carry it.
         await self._handle_public_ip()
         report = await self._manager.status()
+        await self._handle_update(report)
+        await self._handle_restore(report)
         running = report.game is GameState.RUNNING
         await self._handle_transition(running)
         await self._handle_players(report, running)
@@ -95,11 +104,42 @@ class ServerMonitor:
         """Most recent successfully looked-up public address, if any."""
         return self._public_ip
 
+    async def _handle_update(self, report: StatusReport) -> None:
+        if report.pc is not PcState.ONLINE:
+            return  # A temporary outage must not forget an in-flight update.
+        update = report.update
+        previous = self._last_update
+        baseline = self._update_baselined
+        self._update_baselined = True
+        self._last_update = update
+        if update is None or update == previous:
+            return
+        requested = update.job_id == self._manager.requested_update_id
+        if not update.phase.active and (baseline or requested):
+            await self._safe_notify(UPDATE_MESSAGES[update.phase])
+        if not update.phase.active and requested:
+            self._manager.requested_update_id = None
+
     def address_line(self) -> str | None:
         """`ip:port` for players to connect to, when the address is known."""
         if self._public_ip is None:
             return None
         return f"{self._public_ip}:{self._config.game_port}"
+
+    async def _handle_restore(self, report: StatusReport) -> None:
+        if report.pc is not PcState.ONLINE:
+            return
+        current, previous = report.restore, self._last_restore
+        baseline = self._restore_baselined
+        self._restore_baselined = True
+        self._last_restore = current
+        if current is None or current == previous:
+            return
+        requested = current.job_id == self._manager.requested_restore_id
+        if not current.phase.active and (baseline or requested):
+            await self._safe_notify(RESTORE_MESSAGES[current.phase])
+        if not current.phase.active and requested:
+            self._manager.requested_restore_id = None
 
     async def _handle_public_ip(self) -> None:
         interval = self._config.public_ip_check_interval_seconds
@@ -163,6 +203,12 @@ class ServerMonitor:
         self._known_players = current
 
     async def _handle_idle(self, report: StatusReport, running: bool) -> None:
+        if report.restore is not None and report.restore.phase.active:
+            self._idle_seconds = 0.0
+            return
+        if report.update is not None and report.update.phase.active:
+            self._idle_seconds = 0.0
+            return
         threshold_minutes = self._config.idle_shutdown_minutes
         if threshold_minutes <= 0:
             return

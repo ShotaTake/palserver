@@ -2,7 +2,7 @@
 
 ## 1. 公開範囲
 
-ルーターで開放するのは**ゲームポート（UDP 35520）だけ**。クエリポート（35521）は人数取得が `127.0.0.1` 宛なので開ける必要がない。
+ルーターで開放するのは**ゲームポート（UDP 35520）だけ**。クエリポート（35521）は Bot の人数取得が `127.0.0.1` 宛なので開ける必要がない（ゲーム内のサーバー一覧に載せたい場合だけ転送する）。
 
 公開しないもの:
 
@@ -17,15 +17,17 @@
 メンバー数を固定しないため、User ID一覧ではなくDiscordロールIDで管理する。
 
 - Playerロール: status、start、address、load、0人時のstop
-- Maintainerロール: Player権限に加えて、restartと強制stop
+- Maintainerロール: Player権限に加えて、restart・update・diagnose・backups・restoreと強制stop
 
-BotはGuild ID、Channel ID、Role IDをすべて検証する。
+サーバー操作ではGuild ID、Channel ID、Role IDをすべて検証する。
+`/server help` は指定 Guild・Channel 内ならロールなしでも利用できる。
+表示は実行者だけに限定し、その人のロールで利用可能なコマンドを案内する。サーバーへの通信や操作は行わない。
 
 Discordサーバーでロールを付与できる権限は、信頼できる管理者だけに与える。誰でもPlayer/Maintainerロールを付けられる設定では、Bot側の認証が無意味になる。
 
 ## 3. 任意コマンドを禁止
 
-Botがサーバーへ送信できるのは固定の名前だけ: `status`、`start`、`players`、`metrics`、`restart`、`shutdown`、`backup`、`poweroff`。
+Botがサーバーへ送信できるのは固定の名前だけ: `status`、`start`、`players`、`metrics`、`restart`、`shutdown`、`backup`、`poweroff`、`update`、`diagnose`、`backups`、`restore`。
 
 - `shell=True`禁止
 - `/run`のような汎用実行コマンドを作らない
@@ -34,7 +36,11 @@ Botがサーバーへ送信できるのは固定の名前だけ: `status`、`sta
 
 二重にしているのは、片方の設定ミスだけでは任意実行にならないようにするため。
 
+`update` は引数なしの固定 systemd ジョブを起動するだけです。SteamCMD は root 所有の固定ヘルパーを `valheim` ユーザーとして実行します。Bot にはシェル・任意の SteamCMD 引数・sudoers 編集権限を与えません。内部用の `update-run` は SSH の許可リストに含めません。導入は [UPDATE_SETUP.md](UPDATE_SETUP.md) を参照してください。
+
 ## 4. 停止時の保護
+
+復元は一覧から選んだ対象の確認後に実行し、確認時にも本人・ロール・チャンネル・期限を検証します。IDとファイル情報は固定 SSH コマンドの標準入力へ JSON で渡し、任意パスやシェル文字列を受け付けません。root で動く復元ワーカーは root 所有の固定 systemd サービスだけから起動し、アーカイブのパスやリンクを検証して専用ディレクトリへ展開します。systemd 側も書き込み先を制限します。詳細は [MAINTENANCE_SETUP.md](MAINTENANCE_SETUP.md) を参照してください。
 
 - 接続人数0人: Playerが停止可能
 - 接続人数1人以上: Playerは停止不可

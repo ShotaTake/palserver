@@ -31,6 +31,9 @@ OFFLINE = StatusReport(
 
 
 class FakeManager:
+    requested_update_id: str | None = None
+    requested_restore_id: str | None = None
+
     def __init__(self, reports: list[StatusReport]) -> None:
         self._reports = list(reports)
         self.stop_calls: list[bool] = []

@@ -30,6 +30,10 @@ class RemoteCommand(Enum):
     SHUTDOWN = "shutdown"
     BACKUP = "backup"
     POWEROFF = "poweroff"
+    UPDATE = "update"
+    DIAGNOSE = "diagnose"
+    BACKUPS = "backups"
+    RESTORE = "restore"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,19 +87,22 @@ async def run_remote(
     command: RemoteCommand,
     *,
     timeout_seconds: float | None = None,
+    input_data: bytes | None = None,
 ) -> SshResult:
     """Run one fixed remote command and capture its output."""
+    if input_data is not None and (command is not RemoteCommand.RESTORE or len(input_data) > 1024):
+        raise ValueError("only restore accepts a small structured request on stdin")
     if timeout_seconds is None:
         timeout_seconds = config.ssh_command_timeout_seconds
     args = build_ssh_args(config, command)
     process = await asyncio.create_subprocess_exec(
         *args,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout_seconds)
+        stdout, stderr = await asyncio.wait_for(process.communicate(input_data), timeout_seconds)
     except TimeoutError:
         process.kill()
         await process.wait()

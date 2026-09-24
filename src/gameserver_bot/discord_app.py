@@ -16,7 +16,9 @@ from discord import app_commands
 
 from gameserver_bot import auth, pals
 from gameserver_bot.config import BotConfig
+from gameserver_bot.maintenance_ui import register_maintenance
 from gameserver_bot.services import public_ip
+from gameserver_bot.services.maintenance import RESTORE_MESSAGES
 from gameserver_bot.services.monitor import ServerMonitor
 from gameserver_bot.services.server_manager import (
     GameState,
@@ -28,7 +30,9 @@ from gameserver_bot.services.server_manager import (
     StatusReport,
     StopOutcome,
     StopResult,
+    UpdateOutcome,
 )
+from gameserver_bot.services.update import UPDATE_MESSAGES
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,17 @@ _RESTART_MESSAGES = {
     RestartOutcome.RESTART_FAILED: "建て直しにしくじった。番人（ログ）に聞きな。",
 }
 
+_UPDATE_MESSAGES = {
+    UpdateOutcome.ACCEPTED: "更新を受け付けた。進行は /server status、結果は通知先に知らせる。",
+    UpdateOutcome.BUSY: "今は更新か別の操作が進行中だ。しばらく待ちな。",
+    UpdateOutcome.BOOT_TIMEOUT: "WOL を送ったが PC の起動を確認できなかった。更新は始めていない。",
+    UpdateOutcome.REFUSED_PLAYERS: "接続者がいるか、人数が不明だ。更新は始められねえ。",
+    UpdateOutcome.FAILED: "更新を受け付けられなかった。Maintainer が導入設定とログを確認しな。",
+    UpdateOutcome.UNKNOWN: (
+        "更新要求の結果を確認できなかった。再実行する前に /server status を見な。"
+    ),
+}
+
 
 def _format_status(report: StatusReport, game_name: str) -> str:
     lines = [
@@ -68,6 +83,12 @@ def _format_status(report: StatusReport, game_name: str) -> str:
             lines.append(f"接続人数: {report.players}")
     if report.player_names:
         lines.append("客: " + ", ".join(report.player_names))
+    if report.update is not None:
+        label = "更新: " if report.update.phase.active else "直近の更新結果: "
+        lines.append(label + UPDATE_MESSAGES[report.update.phase])
+    if report.restore is not None:
+        label = "復元: " if report.restore.phase.active else "直近の復元結果: "
+        lines.append(label + RESTORE_MESSAGES[report.restore.phase])
     lines.append(f"確認時刻: {report.checked_at:%Y-%m-%d %H:%M:%S}")
     return "\n".join(lines)
 
@@ -218,8 +239,63 @@ async def _ensure_player(interaction: discord.Interaction, config: BotConfig) ->
     return True
 
 
+def _format_help(config: BotConfig, role_ids: list[int]) -> str:
+    lines = [
+        "……扱える品書きはこれだ。目を通しな。",
+        "",
+        "`/server help` — 自分が使えるコマンドと使い方",
+        "`/取引` — ランダムなパルの画像を1枚受け取る",
+    ]
+    if auth.has_player_access(config, role_ids):
+        lines.extend([
+            "",
+            "**サーバー操作（Player）**",
+            "`/server status` — PC・ゲームの状態、接続者、更新・復元の進行を確認",
+            "`/server start` — PC を WOL で起こし、ゲームを起動",
+            "`/server address` — 接続先の IP とポートを表示",
+            "`/server load` — CPU・メモリ・ディスクなどの負荷を確認",
+            "`/server stop` — 保存・停止・バックアップ後、PC の電源をオフ",
+            "※ stop は接続者がいる場合や人数不明の場合には拒否する。",
+            "",
+            "遊び始めるとき: `/server start` → `/server address`",
+        ])
+    else:
+        lines.extend([
+            "",
+            "サーバー操作には Player または Maintainer ロールが必要だ。",
+            "ロールの付与は Discord サーバーの管理者に相談しな。",
+        ])
+    if auth.has_maintainer_access(config, role_ids):
+        lines.extend([
+            "",
+            "**保守操作（Maintainer）**",
+            "`/server restart` — ゲームだけ再起動",
+            "`/server stop force:True` — 接続人数の制限を解除して停止・PC 電源オフ",
+            "`/server update` — 無人を確認し、バックアップ・更新後にゲーム起動",
+            "`/server diagnose` — 接続・応答・容量・権限・停止や復元の状態を診断",
+            "`/server backups` — バックアップの日時と容量を新しい順に最大20件表示",
+            "`/server restore` — 一覧から選択・確認し、現状を退避して復元・ゲーム起動",
+            "※ update は PC がオフなら WOL。接続者あり・人数不明では更新しない。",
+            "※ restore も接続者あり・人数不明では実行しない。",
+            "※ diagnose・backups・restore は PC の起動が必要だ。",
+        ])
+    return "\n".join(lines)
+
+
 def build_server_group(config: BotConfig, manager: ServerManager) -> app_commands.Group:
     group = app_commands.Group(name="server", description="ゲームサーバー操作")
+
+    @group.command(name="help", description="自分が使えるコマンドと使い方を表示します")
+    async def help_command(interaction: discord.Interaction) -> None:
+        if not auth.is_allowed_context(config, interaction.guild_id, interaction.channel_id):
+            await _deny(interaction, "ここは商いの場じゃねえ。指定の場所で声をかけな。")
+            return
+        try:
+            await interaction.response.send_message(
+                _format_help(config, _member_role_ids(interaction)), ephemeral=True,
+            )
+        except discord.NotFound:
+            logger.warning("interaction expired before help could be sent")
 
     @group.command(name="status", description="サーバーの状態を確認します")
     async def status_command(interaction: discord.Interaction) -> None:
@@ -315,6 +391,28 @@ def build_server_group(config: BotConfig, manager: ServerManager) -> app_command
             return
         await _reply(interaction, _format_stop(result))
 
+    @group.command(
+        name="update", description="保存・バックアップ後に更新して起動（Maintainer専用）"
+    )
+    async def update_command(interaction: discord.Interaction) -> None:
+        if not await _ensure_player(interaction, config):
+            return
+        if not auth.has_maintainer_access(config, _member_role_ids(interaction)):
+            await _deny(interaction, "更新は Maintainer だけの仕事だ。")
+            return
+        if not await _acknowledge(interaction):
+            return
+        logger.info("update requested by user_id=%s", interaction.user.id)
+        try:
+            outcome = await manager.update()
+        except Exception:
+            logger.exception("update command failed")
+            await _reply(interaction, _GENERIC_ERROR_MESSAGE)
+            return
+        logger.info("update request outcome=%s user_id=%s", outcome.name, interaction.user.id)
+        await _reply(interaction, _UPDATE_MESSAGES[outcome])
+
+    register_maintenance(group, config, manager)
     return group
 
 

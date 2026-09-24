@@ -228,6 +228,7 @@ read_value() {
 if [ -e "$VALHEIM_ENV" ]; then
   ok "$VALHEIM_ENV は既にあります。中身はそのまま使います。"
   V_PORT="$(read_value "$VALHEIM_ENV" VALHEIM_PORT)"
+  V_PUBLIC="$(read_value "$VALHEIM_ENV" VALHEIM_PUBLIC)"
   V_MODIFIERS="$(read_value "$VALHEIM_ENV" VALHEIM_MODIFIERS)"
 else
   # Everything except the password is decided in the repository, so the usual
@@ -290,6 +291,12 @@ fi
 V_PORT="${V_PORT:-2456}"
 QUERY_PORT=$((V_PORT + 1))
 note "ゲームポート $V_PORT / クエリポート $QUERY_PORT"
+
+# -public 0 does not merely hide the server from the browser: it stops the
+# Steam query responder answering at all, and the player count depends on it.
+if [ "${V_PUBLIC:-1}" = "0" ]; then
+  remember_warning "VALHEIM_PUBLIC=0 では A2S が応答せず、人数取得・自動シャットダウン・プレイヤー名が動きません。1 にしてください。"
+fi
 if [ -n "${V_MODIFIERS:-}" ]; then
   note "ワールド修飾子: $V_MODIFIERS"
 fi
@@ -327,6 +334,16 @@ if ! user_exists "$CTL_USER"; then
 else
   note "$CTL_USER ユーザーは既にあります。"
 fi
+
+# The backup runs as palbotctl without sudo and has to read the world, which
+# lives under valheim's home. useradd creates that home 0750 on Ubuntu 24.04,
+# so outside the group the backup cannot even see the directory and reports
+# "world directory not found" — and a failed backup blocks the poweroff, which
+# is how a machine ends up switched off at the button and deaf to WOL.
+case " $(id -nG "$CTL_USER" 2>/dev/null || true) " in
+  *" $VALHEIM_USER "*) note "$CTL_USER は既に $VALHEIM_USER グループに所属しています。" ;;
+  *) run usermod -aG "$VALHEIM_USER" "$CTL_USER" ;;
+esac
 
 for s in "${CONTROL_SCRIPTS[@]}"; do
   run install -m 0755 -o root -g root "$REPO_ROOT/scripts/server/$s" "$SBIN/$s"
@@ -560,6 +577,23 @@ else
     *restarted*) ok "restart: $out" ;;
     *) fail "restart に失敗しました。sudoers を確認してください: $out" ;;
   esac
+
+  # /server stop refuses to power off when this fails, so check it here rather
+  # than finding out from a machine that will not switch itself off.
+  say "バックアップを一度取って、/server stop が電源まで落とせることを確認します。"
+  out="$(sudo -u "$CTL_USER" "$SBIN/valheim-control" backup 2>&1 || true)"
+  case "$out" in
+    *"backup ok"*) ok "backup: $out" ;;
+    *) fail "バックアップに失敗しました。これが直らないと /server stop は電源を切りません: $out" ;;
+  esac
+fi
+
+# Reuse the reviewed, operator-only installation flow for fixed update access.
+if dry_run; then
+  say "既存構成の導入後、install-update.sh と install-maintenance.sh を実行します（個別に権限確認あり）。"
+else
+  bash "$SCRIPT_DIR/install-update.sh"
+  bash "$SCRIPT_DIR/install-maintenance.sh"
 fi
 
 print_final_warnings

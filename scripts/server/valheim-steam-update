@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Root-owned, invoked as valheim through one argument-free sudoers entry.
+# Neither paths, app ID, branch, nor SteamCMD arguments come from Discord.
+[ "$#" -eq 0 ] || exit 64
+cd /opt/valheim-server
+log_file="$(mktemp)"
+trap 'rm -f "$log_file"' EXIT
+result=0
+/usr/games/steamcmd +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 \
+  +force_install_dir /opt/valheim-server +login anonymous \
+  +app_info_update 1 +app_update 896660 validate +quit >"$log_file" 2>&1 || result=$?
+# Full output goes only to the systemd journal, never to Discord.
+cat "$log_file"
+[ "$result" -eq 0 ] || exit "$result"
+# Do not mistake a SteamCMD launch/login failure for a successful update.
+grep -Fq "Success! App '896660' fully installed." "$log_file"
+test -x /opt/valheim-server/valheim_server.x86_64

@@ -1,0 +1,2 @@
+# Validate with visudo -cf before installation. Root-owned fixed worker only.
+palbotctl ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block valheim-restore.service

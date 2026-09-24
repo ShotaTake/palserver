@@ -1,0 +1,17 @@
+[Unit]
+Description=Back up and update Valheim on request
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=palbotctl
+Group=palbotctl
+WorkingDirectory=/
+ExecStart=/usr/local/sbin/valheim-control update-run
+TimeoutStartSec=1h
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+
+# Deliberately no Install section: only a fixed Discord/SSH request starts it.
