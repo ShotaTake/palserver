@@ -25,7 +25,7 @@
 - プレイヤーがいない時間に作業し、作業中は接続を控えてもらいます。
 - サーバー PC を起動し、管理用 SSH で接続できる状態にします。必要なら Bot を停止する前に `/server start` を使います。
 - 更新・復元が実行中でないことを `/server status` で確認します。
-- サーバー PC の標準構成は `valheim` / `palbotctl` ユーザー、ゲーム本体 `/opt/valheim-server`、SteamCMD `/usr/games/steamcmd` です。保守機能には Python 3.11 以上が必要です。
+- サーバー PC の標準構成は `valheim` / `palbotctl` ユーザー、ゲーム本体 `/opt/valheim-server`、SteamCMD `/usr/games/steamcmd` です。保守機能には `/usr/bin/python3` が Python 3.10 以上であることが必要です。Pi の Bot 本体は Python 3.11 以上が必要です。
 - ワールドは `/home/valheim/.config/unity3d/IronGate/Valheim/worlds_local`、バックアップは `/var/lib/gameserver-backups` を前提にしています。独自構成は [更新機能の導入](UPDATE_SETUP.md) と [保守機能の導入](MAINTENANCE_SETUP.md) を先に確認してください。
 
 各コマンドが成功してから次へ進んでください。エラーが出た場合は、その段階で止めて「うまくいかない場合」を参照します。
@@ -169,6 +169,8 @@ journalctl -u gameserver-bot.service -n 50 --no-pager
 作業内容を確認せず `git reset --hard` やリポジトリ削除で解消しないでください。
 
 ### 導入スクリプトが失敗した
+
+Python 3.10.x なのに「Python 3.11 以上が必要」と表示される場合は、古い導入スクリプトを使っています。サーバー PC で `git pull --ff-only origin main` を実行し、`sudo bash scripts/setup/install-maintenance.sh --dry-run` から再開してください。サーバー PC 側の保守機能のために Python を3.11へ入れ替える必要はありません。判定対象は `/usr/bin/python3 --version` で確認できます。
 
 Bot を停止したまま、表示された不足条件を確認します。
 Python のバージョン、ユーザー、保存先、SteamCMD の場所、進行中の更新・復元が主な確認項目です。

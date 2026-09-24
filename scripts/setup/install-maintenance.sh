@@ -9,13 +9,16 @@ trap on_error ERR
 parse_common_args "$@"
 [ "${#REMAINING_ARGS[@]}" -eq 0 ] || fail "不明な引数です。"
 require_root
-need_cmd python3 "Python 3.11 以上が必要です。"
+# The standalone server helper uses Python 3.10; only the Pi bot needs 3.11.
+# Check the helper's exact shebang interpreter, not an activated venv.
+[ -x /usr/bin/python3 ] || fail "/usr/bin/python3 に Python 3.10 以上が必要です。"
 need_cmd visudo "sudo が必要です。"
 need_cmd flock "util-linux が必要です。"
 need_cmd systemctl "systemd が必要です。"
 user_exists valheim || fail "既存の Valheim 導入が必要です。"
 user_exists palbotctl || fail "既存の Bot 連携が必要です。"
-/usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 11)' || fail "Python 3.11 以上が必要です。"
+/usr/bin/python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || \
+  fail "/usr/bin/python3 に Python 3.10 以上が必要です。現在: $(/usr/bin/python3 --version)"
 
 for service in valheim-update.service valheim-restore.service; do
   case "$(systemctl show -p ActiveState --value "$service" 2>/dev/null || true)" in

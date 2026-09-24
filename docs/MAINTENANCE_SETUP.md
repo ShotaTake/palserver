@@ -12,7 +12,7 @@
 
 ## 初回導入
 
-標準構成（ユーザー `valheim` / `palbotctl`、サービス `valheim-server.service`、ワールド `/home/valheim/.config/unity3d/IronGate/Valheim/worlds_local`、バックアップ `/var/lib/gameserver-backups`）向けです。Python 3.11 以上が必要です。独自配置の場合は固定ヘルパーと systemd の書き込み許可先を所有者が調整してください。
+標準構成（ユーザー `valheim` / `palbotctl`、サービス `valheim-server.service`、ワールド `/home/valheim/.config/unity3d/IronGate/Valheim/worlds_local`、バックアップ `/var/lib/gameserver-backups`）向けです。サーバー PC の `/usr/bin/python3` は **Python 3.10 以上**に対応しています。Raspberry Pi の Bot 本体は引き続き Python 3.11 以上が必要です。独自配置の場合は固定ヘルパーと systemd の書き込み許可先を所有者が調整してください。
 
 変更済みコードを両マシンへ反映してから、プレイヤーがいない時間に実施します。
 

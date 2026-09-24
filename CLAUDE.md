@@ -8,6 +8,8 @@ The Raspberry Pi runs the Discord bot and sends Wake on LAN packets. The server 
 
 The bot is deliberately game-neutral in its plumbing (hence the `gameserver_bot` package): only the server-side control script knows which game is running.
 
+The Pi bot requires Python 3.11+. The standalone server maintenance helper must remain compatible with Python 3.10 and does not import the bot package.
+
 The number of players is not fixed. Do not hardcode a player list or a fixed player count. Authorization must use configurable Discord role IDs.
 
 ## Scope
